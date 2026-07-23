@@ -1,0 +1,19 @@
+# ====================================================================
+# Invites Loop OLAP Pipeline - Airflow Parsing Ignore List
+# ====================================================================
+
+# 1. Ignore common modules or package initialization files that start with an underscore (_)
+.*/__init__\.py$
+.*/_.*$
+
+# 2. Ignore Python files temporarily backed up during local testing or development
+.*\.py\.bak$
+.*_backup\.py$
+.*_old\.py$
+
+# 3. Exception handling in case temporary queries or utility scripts are placed within the dags/ folder
+.*/utils/.*
+.*/queries/.*
+
+# 4. Ignore scripts for unit testing and validation if they are located within or under dags/
+.*test_.*\.py$

@@ -1,0 +1,11 @@
+[project]
+name = "invites-loop-bi"
+version = "0.1.0"
+description = "Invites Loop OLAP ELT Pipeline"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+
+[tool.setuptools.packages.find]
+where = ["src"]

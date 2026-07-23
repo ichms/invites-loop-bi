@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# ====================================================================
+# Invites Loop OLAP Pipeline - Local Development Environment Variables
+# ====================================================================
+# Template. Copy to setup_env.sh and fill in real credentials:
+#   cp setup_env.sh.example setup_env.sh
+# setup_env.sh is gitignored — never commit real credentials.
+#
+# Note: URL-encode special characters in the password (e.g. ! -> %21, @ -> %40).
+
+# 1. iccoli DB connection info (Airflow Connection ID: iccoli_db_conn)
+export AIRFLOW_CONN_ICCOLI_DB_CONN="postgresql://<user>:<password>@<host>:5432/iccoli"
+
+# 2. invites_loop DB connection info (Airflow Connection ID: invites_loop_db_conn)
+export AIRFLOW_CONN_INVITES_LOOP_DB_CONN="postgresql://<user>:<password>@<host>:5432/invites_loop"
+
+# 3. Target PostgreSQL OLAP DB connection info (Airflow Connection ID: olap_db_conn)
+export AIRFLOW_CONN_OLAP_DB_CONN="postgresql://<user>:<password>@<host>:5432/olap_dw"
+
+echo "=== [Success] Invites Loop OLAP local test Airflow environment variables registration completed ==="
+echo "List of registered connections:"
+echo "  - iccoli_db_conn"
+echo "  - invites_loop_db_conn"
+echo "  - olap_db_conn"

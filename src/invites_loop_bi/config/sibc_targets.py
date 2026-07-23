@@ -1,0 +1,217 @@
+SIBC_EXTRACTION_TARGETS = [
+	{
+		"schema_name": "sibc",
+		"table_name": "api_logs",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "chat_msgs",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "chat_thread_evts",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "chat_threads",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "chat_threads_batch_state",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "chat_threads_turns",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "daily_routine_activities",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "daily_routines",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "health_assistant_msg",
+		"watermark_col": "generated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "insight_texts",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "insight_texts_history",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "llm_usage",
+		"watermark_col": "ts",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "onboarding_qstn_master",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "send_messages",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "target_calorie",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_bhv_log",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_checkup_log",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_diet_analysis",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_dtc_log",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_event_log",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_guardrail",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_intg_log",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_irs_log",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_master",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_profiles_log",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_routine_fdbk",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_signature_type",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_state_log",
+		"watermark_col": "created_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "user_unavl_periods",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "weekly_routine_goal",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "weekly_routine_plan",
+		"watermark_col": "updated_at",
+		"fallback_watermark_col": None,
+	},
+]
+
+
+SIBC_FULL_REFRESH_TARGETS = [
+	{
+		"schema_name": "sibc",
+		"table_name": "disease_factor",
+		"load_type": "full_refresh",
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "disease_info",
+		"load_type": "full_refresh",
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "genetic_trait_info",
+		"load_type": "full_refresh",
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "lifestyle_mapping",
+		"load_type": "full_refresh",
+	},
+	{
+		"schema_name": "sibc",
+		"table_name": "signature_type_mapping",
+		"load_type": "full_refresh",
+	},
+]
