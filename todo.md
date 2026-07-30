@@ -18,7 +18,7 @@ Transform is deliberately untouched: `src/invites_loop_bi/transform/runner.py` i
 | `load/` — staging loader (auto-DDL, upsert / truncate / delete-window) | done |
 | `pipeline.py` — `run_table`, `run_source_system`, CLI | done |
 | `connections.py` — `AIRFLOW_CONN_*` → psycopg2, `PostgresHook` fallback | done |
-| `dags/elt_to_staging.py` — 5 DAGs, one mapped task per table | done, never executed |
+| `dags/elt_to_staging.py` — 5 DAGs, one mapped task per table | done, verified with a live test run |
 | `tests/` — 110 tests, both pytest and a standalone runner | done |
 | `transform/runner.py` | **empty — next phase** |
 | OLAP layer schema | **not started** |
@@ -96,11 +96,65 @@ Remaining tables over 200 MB: `disc_lifelog_user_heartrate` (881 MB), `sibc.api_
 - [x] `OVERLAP = timedelta(minutes=5)` — decided; replays are free, so the safety window costs
       only a few minutes of re-read rows per run.
 
-### 5. OLAP layer + transform
+### 5. OLAP layer + transform — direction (next session)
 
-- [ ] Settle the three caveats above (history, deletes, PII).
-- [ ] Design the OLAP schema against what is actually in staging.
-- [ ] Implement `transform/runner.py` and its DAG.
+Business frame, from `docs/` (via the `invites-loop-knowledge-base` skill): everything serves the
+patient-journey loop W → M1 → M2 → M3. The analytical units the OLAP layer must speak in are
+**users** (conformed across all 5 systems), **IRS+ risk scores** (`irs.user_irs_hist`),
+**Signature cohorts**, **SiBC interventions/routines and their responses**, **app engagement**
+(iccoli logins, menu visits, actions, push) and **lifelog measurements** (discovery). The
+`invites-loop-olap-connection` skill queries the warehouse directly.
+
+#### 5a. Caveat 1 — dimension history (decide first, it's time-sensitive)
+
+Staging upserts, so history capture can only start *from the day we build it* — every day without
+it is unrecoverable. Mutable dimensions at risk: `tb_user_info` / `tb_user_activity_info`,
+`disc_*_user_info`, `auth_user*`, sibc profile tables. Options:
+- (a) accept current-only — fine if BI only ever reports "as of now";
+- (b) **periodic snapshot tables in transform (recommended as cheap insurance)** — a daily
+  `INSERT ... SELECT` per dimension into `hist.*`, trivially simple, turns into SCD2 later if
+  needed;
+- (c) full SCD2 dimensions now — most powerful, most work, needs the OLAP design settled first.
+- [ ] Decide (a)/(b)/(c). If (b), it can ship before the rest of transform exists.
+
+#### 5b. Caveat 2 — hard deletes (surveyed 2026-07-30)
+
+Soft-delete/withdraw markers exist only in: iccoli `tb_user_info`
+(`deactivated_datetime`/`purged_datetime`) + `tb_stats_user_info_log`; ichms `auth_client`,
+`auth_customer`, `auth_customer_message`, `oper_member_group`, `oper_user_group`,
+`oper_user_role`, `auth_user_withdraw_history`; discovery `disc_lifelog_user_meal`
+(`is_deleted`). **sibc and irs have none, nor do the other discovery tables.**
+- [ ] Classify the unmarked tables: append-only logs (deletes don't happen — most of them) vs
+      mutable-without-marker. For the latter: small ones → move to `*_FULL_REFRESH_TARGETS`;
+      large ones → periodic PK-reconciliation against the source, or accept staleness knowingly.
+- [ ] Decide the deletion-request path: given a purged upstream user, delete their rows from
+      `stg_*` (and later the OLAP layer) by user key — needs to exist before anyone asks.
+
+#### 5c. Caveat 3 — PII (decided: pseudonymize in transform)
+
+- [ ] First transform step: replace user UUIDs with `hmac(uuid, salt, 'sha256')` via pgcrypto —
+      must produce byte-identical output to `utils/crypto.generate_user_key()` so keys join
+      across systems (add a test asserting SQL == Python on a fixture). Salt comes from an env
+      var / Airflow Variable, never git.
+- [ ] Inventory direct identifiers beyond UUIDs (`tb_user_personal_info`: name, phone, email,
+      birth date...) — those want exclusion or masking in the OLAP layer, not hashing.
+- [ ] Until then: restrict warehouse access to `stg_*` schemas (raw UUIDs sit there now).
+
+#### 5d. OLAP schema design
+
+- [ ] Map the user-identity graph first: how iccoli UUIDs, ichms `auth_user`, discovery/sibc/irs
+      user keys join (`tb_ext_user_mapper` / `tb_ext_user_preinfo` look like the bridge). One
+      conformed user dimension is the spine of everything else.
+- [ ] Then pick fact tables by loop question, one grain each. Candidates: app-engagement events
+      (login/menu/action logs), interventions sent vs responded (push history, message hist,
+      sibc routines/missions), lifelog measurements (per-type, from discovery), risk-score
+      history (`user_irs_hist`), attendance/activity. Dimensions: user (+ cohort), date, menu,
+      action, disease.
+- [ ] Decide layering + tooling: plain-SQL steps executed by `transform/runner.py` (ordered SQL
+      files, one transaction each — keeps the no-dataframe principle) vs adopting dbt. Leaning
+      plain SQL first; dbt is adoptable later without losing the SQL.
+- [ ] Implement `transform/runner.py` + its DAG, then revisit section 4: set a real `SCHEDULE`
+      and chain staging → transform.
 
 ## Known deferrals
 
