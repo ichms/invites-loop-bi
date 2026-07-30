@@ -12,13 +12,13 @@ Transform is deliberately untouched: `src/invites_loop_bi/transform/runner.py` i
 
 | Piece | State |
 |---|---|
-| `config/` — 108 targets across 5 systems, registry + validation | done |
+| `config/` — 107 targets across 5 systems, registry + validation | done |
 | `extract/` — COPY-based extractor, catalog introspection, watermarks | done |
 | `load/` — staging loader (auto-DDL, upsert / truncate / delete-window) | done |
 | `pipeline.py` — `run_table`, `run_source_system`, CLI | done |
 | `connections.py` — `AIRFLOW_CONN_*` → psycopg2, `PostgresHook` fallback | done |
 | `dags/elt_to_staging.py` — 5 DAGs, one mapped task per table | done, never executed |
-| `tests/` — 98 tests, both pytest and a standalone runner | done |
+| `tests/` — 110 tests, both pytest and a standalone runner | done |
 | `transform/runner.py` | **empty — next phase** |
 | OLAP layer schema | **not started** |
 
@@ -54,7 +54,7 @@ Three caveats, all about **what staging retains** — cheap to decide now, expen
       `service=invites_dw` string works as the value — it is passed straight to libpq.
       Check with: `uv run python -m invites_loop_bi.pipeline iccoli --table tb_action_mapper --dry-run`
       (read-only, creates nothing).
-- [ ] `uv run pytest` → expect 98 passed.
+- [ ] `uv run pytest` → expect 110 passed.
 
 ### 2. First committed load — small systems first
 
@@ -63,8 +63,9 @@ Loads are idempotent, so a bad run can simply be repeated.
 - [ ] One table as a smoke test: `uv run python -m invites_loop_bi.pipeline iccoli --table tb_action_mapper`
 - [ ] Inspect `stg_iccoli.tb_action_mapper` and the row in `stg_meta.watermarks`.
 - [ ] Re-run the same command; row count must not change and the second run should extract 0 rows.
-- [ ] Then whole systems, smallest first: `iccoli` (0.2 GB), `ichms` (0.2 GB), `irs` (0.3 GB),
-      `sibc` (2.8 GB).
+- [ ] Then whole systems, smallest first: `ichms` (189 MB), `iccoli` (231 MB), `irs` (356 MB),
+      `discovery` (1.02 GB), `sibc` (2.86 GB). Discovery is no longer a special case — after the
+      scoping in section 3 it is the second smallest system.
 
 ### 3. Discovery — resolved by scoping, no batching needed for now
 
@@ -87,7 +88,7 @@ Remaining tables over 200 MB: `disc_lifelog_user_heartrate` (881 MB), `sibc.api_
 
 ### 4. Airflow
 
-- [ ] Point Airflow at `dags/`, confirm all 5 DAGs appear and 108 mapped tasks expand.
+- [ ] Point Airflow at `dags/`, confirm all 5 DAGs appear and 107 mapped tasks expand.
 - [ ] Tune `SCHEDULE` (`@hourly`) and `MAX_PARALLEL_TABLES` (4) at the top of
       `dags/elt_to_staging.py` — both are placeholders.
 - [ ] Decide `OVERLAP` (currently 0). Raising it re-reads a safety window below the watermark, which
@@ -115,12 +116,9 @@ Remaining tables over 200 MB: `disc_lifelog_user_heartrate` (881 MB), `sibc.api_
   and `disc_lifelog_user_meal.ins_dt`/`upd_dt` are unindexed — so each incremental run seq-scans the
   heap. Tolerable at current sizes (heartrate's heap is 492 MB, meal's is 2.5 MB) and it is a change
   to a production source DB, so: monitor rather than act.
-
 - **14 incremental targets have no primary key** (2 sibc, 12 discovery lifelog) — accepted as-is;
   the loader uses delete-window-then-insert for them, which is idempotent. Listed in
   `KNOWN_MISSING_PRIMARY_KEY` in `tests/extract/test_introspect.py`.
-- **`README.md` is stale** — it still describes a polars/ADBC design and a `src/` layout that no
-  longer matches. `CLAUDE.md` is current; the README is not.
 - **No linter or CI.** `pyproject.toml` has pytest configured but nothing else.
 - **`apache-airflow` is pinned `~=3.2.2`** in the dev group to match the local install. Bump
   deliberately, alongside the deployed image.
