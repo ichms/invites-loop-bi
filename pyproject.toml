@@ -4,8 +4,29 @@ version = "0.1.0"
 description = "Invites Loop OLAP ELT Pipeline"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+# The pipeline itself only talks to PostgreSQL: rows move source -> warehouse as
+# `COPY ... CSV` bytes, so no dataframe or driver-side type handling is involved.
+dependencies = [
+	"psycopg2-binary>=2.9.9",
+]
+
+[dependency-groups]
+# Airflow is the runtime environment rather than a library this package imports;
+# it lives here so `uv sync` keeps a working local DAG setup without pinning
+# production to whatever the image ships.
+dev = [
+	# Pinned to the minor already in use locally; bump deliberately, together with
+	# whatever the deployed Airflow image runs.
+	"apache-airflow~=3.2.2",
+	"apache-airflow-providers-postgres>=6",
+	"pytest>=8",
+]
 
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/ is a package (tests.db, tests.fakes), so the project root must be importable
+pythonpath = ["."]

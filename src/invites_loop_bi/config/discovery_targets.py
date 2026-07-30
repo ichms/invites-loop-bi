@@ -68,7 +68,9 @@ DISCOVERY_EXTRACTION_TARGETS = [
 	{
 		"schema_name": "discovery",
 		"table_name": "disc_lifelog_user_food",
-		"watermark_col": "measured_dt",
+		# No measured_dt on this table; ins_dt is its only timestamp, as in
+		# disc_lifelog_user_meal.
+		"watermark_col": "ins_dt",
 		"fallback_watermark_col": None,
 	},
 	{
@@ -83,17 +85,21 @@ DISCOVERY_EXTRACTION_TARGETS = [
 		"watermark_col": "measured_dt",
 		"fallback_watermark_col": None,
 	},
-	{
-		"schema_name": "discovery",
-		"table_name": "disc_lifelog_user_info",
-		"watermark_col": "ins_dt",
-		"fallback_watermark_col": None,
-	},
+	# disc_lifelog_user_info is deliberately NOT extracted: it holds every lifelog
+	# transaction (23 GB, ~206 kB per row) and the same ground can be covered from
+	# the per-measurement tables below.
 	{
 		"schema_name": "discovery",
 		"table_name": "disc_lifelog_user_meal",
-		"watermark_col": "ins_dt",
-		"fallback_watermark_col": None,
+		# Only the history of dietary records is needed, not the meals themselves:
+		# meal_data holds base64 images averaging 557 kB per row, against 44 bytes
+		# for every other column combined (21 GB -> ~1.5 MB).
+		"exclude_columns": ("meal_data",),
+		# upd_dt is NULL until a record is edited or soft-deleted (35,174 of 36,338
+		# rows), so the predicate has to fall back to ins_dt -- watermarking on
+		# ins_dt alone would never see an edit or a deletion.
+		"watermark_col": "upd_dt",
+		"fallback_watermark_col": "ins_dt",
 	},
 	{
 		"schema_name": "discovery",
@@ -110,13 +116,9 @@ DISCOVERY_EXTRACTION_TARGETS = [
 	{
 		"schema_name": "discovery",
 		"table_name": "disc_lifelog_user_sleep_detail",
+		# Wearables write measure_start_dt and measure_end_dt together and both are
+		# NOT NULL, so either works and a fallback would never fire.
 		"watermark_col": "measure_end_dt",
-		"fallback_watermark_col": None,
-	},
-	{
-		"schema_name": "discovery",
-		"table_name": "disc_lifelog_user_sleep_detail",
-		"watermark_col": "measured_dt",
 		"fallback_watermark_col": None,
 	},
 	{

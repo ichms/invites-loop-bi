@@ -44,7 +44,9 @@ ICCOLI_EXTRACTION_TARGETS = [
 	{
 		"schema_name": "public",
 		"table_name": "tb_loop_push_history",
-		"watermark_col": "update_datetime",
+		# This table has no update_datetime; read_datetime is what changes after
+		# insert (when the user opens the push), so it plays the same role.
+		"watermark_col": "read_datetime",
 		"fallback_watermark_col": "create_datetime",
 	},
 	{
@@ -100,12 +102,6 @@ ICCOLI_EXTRACTION_TARGETS = [
 		"table_name": "tb_ext_user_mapper",
 		"watermark_col": "create_datetime",
 		"fallback_watermark_col": None,
-	},
-	{
-		"schema_name": "public",
-		"table_name": "tb_ext_user_preinfo",
-		"watermark_col": "update_datetime",
-		"fallback_watermark_col": "create_datetime",
 	},
 	{
 		"schema_name": "public",

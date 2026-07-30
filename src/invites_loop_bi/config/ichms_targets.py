@@ -62,7 +62,7 @@ ICHMS_EXTRACTION_TARGETS = [
 	{
 		"schema_name": "ichms",
 		"table_name": "cudc_workflow_history",
-		"watermark_col": "updated_at",
+		"watermark_col": "updated_dt",
 		"fallback_watermark_col": None,
 	},
 	{
