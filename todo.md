@@ -4,9 +4,10 @@ Last updated: 2026-07-30. Architecture lives in `CLAUDE.md`; this file is the wo
 
 ## Where we are
 
-**Extract and Load are done, tested against the real databases, and wired into Airflow DAGs.**
-Nothing has been committed to the warehouse yet — every test run so far was rolled back, verified
-by counting tables in `stg_iccoli` / `stg_discovery` / `stg_meta` afterwards (all zero).
+**Extract and Load are done, and the first production load ran on 2026-07-30: all 107 tables
+across the 5 systems are in staging, every watermark row is SUCCESS.** Incremental runs from here
+on only pick up changes. Because the warehouse is no longer empty, tests that assume first-run
+state now call `tests.db.reset_staging()` inside their rolled-back transaction.
 
 Transform is deliberately untouched: `src/invites_loop_bi/transform/runner.py` is still empty.
 
@@ -47,25 +48,21 @@ Three caveats, all about **what staging retains** — cheap to decide now, expen
 
 ## Next session
 
-### 1. Preflight
+### 1. Preflight — done 2026-07-30
 
-- [ ] **Confirm `AIRFLOW_CONN_OLAP_DB_CONN` is set** and points at `invites_dw` (it was commented
-      out in `setup_env.sh` and pointed at a `localhost` database that does not exist). A
-      `service=invites_dw` string works as the value — it is passed straight to libpq.
-      Check with: `uv run python -m invites_loop_bi.pipeline iccoli --table tb_action_mapper --dry-run`
-      (read-only, creates nothing).
-- [ ] `uv run pytest` → expect 110 passed.
+- [x] `AIRFLOW_CONN_OLAP_DB_CONN` set in `setup_env.sh`, points at `invites_dw`; dry run OK.
+- [x] `uv run pytest` → 110 passed.
 
-### 2. First committed load — small systems first
+### 2. First committed load — done 2026-07-30
 
-Loads are idempotent, so a bad run can simply be repeated.
-
-- [ ] One table as a smoke test: `uv run python -m invites_loop_bi.pipeline iccoli --table tb_action_mapper`
-- [ ] Inspect `stg_iccoli.tb_action_mapper` and the row in `stg_meta.watermarks`.
-- [ ] Re-run the same command; row count must not change and the second run should extract 0 rows.
-- [ ] Then whole systems, smallest first: `ichms` (189 MB), `iccoli` (231 MB), `irs` (356 MB),
-      `discovery` (1.02 GB), `sibc` (2.86 GB). Discovery is no longer a special case — after the
-      scoping in section 3 it is the second smallest system.
+- [x] Smoke test: `tb_action_mapper` loaded 37 rows, watermark row SUCCESS.
+- [x] Re-run extracted 0 rows, count unchanged — idempotency confirmed live.
+- [x] All systems loaded: ichms 16 tables / 636,726 rows (~45 s), iccoli 18 / 972,918 (~33 s),
+      irs 5 / 188,044 (~90 s), discovery 32 / 9,032,555 (~80 s), sibc 36 / 4,174,960 (7 m 40 s).
+      One table failed on the first sibc pass — `genetic_trait_info` has Korean column names
+      (`원활`, `서행`, `정체`) that the ASCII-only `quote_ident()` pattern rejected. Relaxed the
+      pattern to Unicode word characters (quotes/whitespace/punctuation still rejected), reran,
+      loaded cleanly. The failure path worked as designed: FAILED recorded, watermark unmoved.
 
 ### 3. Discovery — resolved by scoping, no batching needed for now
 
@@ -83,17 +80,21 @@ Per system now: sibc 2.86 GB, discovery 1.02 GB, irs 356 MB, iccoli 231 MB, ichm
 Remaining tables over 200 MB: `disc_lifelog_user_heartrate` (881 MB), `sibc.api_logs` (871 MB),
 `sibc.daily_routine_activities` (776 MB), `sibc.llm_usage` (758 MB).
 
-- [ ] Watch peak disk and duration on the first `sibc` run (2.86 GB, the largest system). The spool
-      keeps 128 MB in memory and spills the rest to the system temp dir.
+- [x] Watched the first `sibc` run: 7 m 40 s wall clock, no measurable temp-disk growth
+      (df delta ~13 MB across the run).
 
-### 4. Airflow
+### 4. Airflow — done 2026-07-30
 
-- [ ] Point Airflow at `dags/`, confirm all 5 DAGs appear and 107 mapped tasks expand.
-- [ ] Tune `SCHEDULE` (`@hourly`) and `MAX_PARALLEL_TABLES` (4) at the top of
-      `dags/elt_to_staging.py` — both are placeholders.
-- [ ] Decide `OVERLAP` (currently 0). Raising it re-reads a safety window below the watermark, which
-      catches rows committed out of order by long upstream transactions. Replaying is free because
-      loads are idempotent.
+- [x] Airflow points at the repo's `dags/` via `AIRFLOW__CORE__DAGS_FOLDER` in `setup_env.sh`
+      (metadata DB in `~/airflow`, initialized with `airflow db migrate`). All 5 DAGs parse with
+      no import errors and register paused. `airflow dags test elt_irs_to_staging` ran end to
+      end in 9 s: 5 mapped tasks expanded, each named after its table, all incremental, all
+      SUCCESS.
+- [x] `SCHEDULE = None` — **decided: manual triggering only until the transform layer exists**,
+      then pick a real schedule (`@hourly` is a fine starting point; the irs incremental run
+      took 9 s). `MAX_PARALLEL_TABLES` stays 4.
+- [x] `OVERLAP = timedelta(minutes=5)` — decided; replays are free, so the safety window costs
+      only a few minutes of re-read rows per run.
 
 ### 5. OLAP layer + transform
 
@@ -127,6 +128,12 @@ Remaining tables over 200 MB: `disc_lifelog_user_heartrate` (881 MB), `sibc.api_
 
 ## Fixed along the way (context, not tasks)
 
+- `quote_ident()` rejected non-ASCII identifiers; `sibc.genetic_trait_info` has three Korean
+  column names straight from the source catalog. The pattern now allows Unicode word characters
+  and still rejects everything quoting relies on (quotes, whitespace, punctuation).
+- Tests that assumed an empty warehouse ("first run") broke after the first committed load; they
+  now restore first-run state via `tests.db.reset_staging()` — drop the staging table and delete
+  the watermark row *inside* the rolled-back transaction, so committed data is untouched.
 - `stg_meta.watermarks` lookups filtered on `last_status = 'SUCCESS'`, so one failed run looked
   like a first run and silently full-reloaded the whole table.
 - `iccoli.tb_loop_push_history` declared a watermark column (`update_datetime`) that does not

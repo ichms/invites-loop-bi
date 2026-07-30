@@ -7,7 +7,7 @@ One DAG per source system, one dynamically mapped task per configured table:
 	elt_ichms_to_staging       16 tables  -\\
 	elt_sibc_to_staging        36 tables   |  schemas inside `invites_loop`
 	elt_irs_to_staging          5 tables   |
-	elt_discovery_to_staging   33 tables  -/
+	elt_discovery_to_staging   32 tables  -/
 
 Adding a table to a pipeline means adding an entry to
 `invites_loop_bi.config.<system>_targets`; no change is needed here.
@@ -26,8 +26,9 @@ from invites_loop_bi.config import SOURCE_SYSTEMS, get_extraction_targets
 from invites_loop_bi.connections import open_connections
 from invites_loop_bi.pipeline import run_table
 
-#: Incremental runs are cheap, so run often and keep each window small.
-SCHEDULE = "@hourly"
+#: Manual triggering only until the transform layer exists; then pick a real
+#: schedule (incremental runs are cheap, so "@hourly" is a fine starting point).
+SCHEDULE = None
 START_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 #: Tables loaded concurrently per system. Every one of them holds a source
@@ -37,7 +38,7 @@ MAX_PARALLEL_TABLES = 4
 #: Re-read this far below the last watermark. Rows committed out of watermark
 #: order (long transactions upstream) would otherwise be missed; the load is
 #: idempotent, so replaying them is free. Raise it if rows ever go missing.
-OVERLAP = timedelta(minutes=0)
+OVERLAP = timedelta(minutes=5)
 
 DEFAULT_ARGS = {
 	"retries": 2,

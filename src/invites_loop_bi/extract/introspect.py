@@ -20,7 +20,9 @@ import re
 from dataclasses import dataclass, replace
 
 _PARAMS_RE = re.compile(r"\(\s*\d+(?:\s*,\s*\d+)?\s*\)")
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$")
+# \w so non-ASCII letters pass (sibc.genetic_trait_info has Korean column names);
+# quotes, whitespace and punctuation still fail, which is what quoting relies on.
+_IDENTIFIER_RE = re.compile(r"^[^\W\d$][\w$]{0,62}$")
 
 #: Built-in types the warehouse can declare exactly as the source does.
 BUILTIN_TYPES = frozenset({

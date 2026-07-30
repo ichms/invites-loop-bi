@@ -134,3 +134,24 @@ def sessions(source_system: str = "iccoli"):
 	"""Both sides at once: `with sessions() as (source, dw):`."""
 	with source_session(source_system) as source, dw_session() as dw:
 		yield source, dw
+
+
+def reset_staging(dw, source_system: str, schema_name: str, table_name: str) -> None:
+	"""
+	Restore first-run conditions for one table, inside the test's transaction.
+
+	The warehouse holds committed production loads, so a test that assumes "no
+	staging table, no watermark" must drop both first. Everything here is undone
+	by the session rollback, so the committed data is untouched.
+	"""
+	staging = f'stg_{source_system}."{table_name}"'
+	with dw.cursor() as cursor:
+		cursor.execute("SELECT to_regclass(%s)", (staging,))
+		if cursor.fetchone()[0]:
+			cursor.execute(f"DROP TABLE {staging}")
+		cursor.execute("SELECT to_regclass('stg_meta.watermarks')")
+		if cursor.fetchone()[0]:
+			cursor.execute(
+				"DELETE FROM stg_meta.watermarks WHERE source_system=%s AND schema_name=%s AND table_name=%s",
+				(source_system, schema_name, table_name),
+			)

@@ -15,7 +15,7 @@ from datetime import timedelta
 from invites_loop_bi.config import get_extraction_targets
 from invites_loop_bi.extract import build_extractor
 from invites_loop_bi.load import StagingLoader
-from tests.db import sessions
+from tests.db import reset_staging, sessions
 from tests.fakes import StubWatermarkManager
 
 #: table -> the type it is here to prove
@@ -56,6 +56,8 @@ def small_slice(source, target, table_name, newest):
 
 
 def check_table(source, dw, table_name):
+	# the staging comparison below reads the whole table, so it must start empty
+	reset_staging(dw, "iccoli", "public", table_name)
 	target = next(t for t in get_extraction_targets("iccoli") if t["table_name"] == table_name)
 	probe = bounded_extractor(source, target, None)
 	newest = newest_watermark(source, probe, table_name)

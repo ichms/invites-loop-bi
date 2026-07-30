@@ -4,7 +4,7 @@ from invites_loop_bi.config import get_extraction_targets
 from invites_loop_bi.extract import WatermarkManager
 from invites_loop_bi.load import StagingLoader
 from invites_loop_bi.pipeline import TableRunResult, describe_plan, run_source_system, run_table
-from tests.db import sessions
+from tests.db import reset_staging, sessions
 
 TABLE = "tb_action_mapper"
 
@@ -12,6 +12,12 @@ TABLE = "tb_action_mapper"
 def target_for(table_name=TABLE, **overrides):
 	target = next(t for t in get_extraction_targets("iccoli") if t["table_name"] == table_name)
 	return {**target, **overrides}
+
+
+def fresh(dw, *tables):
+	"""First-run conditions for iccoli tables (undone by the session rollback)."""
+	for table_name in tables or (TABLE,):
+		reset_staging(dw, "iccoli", "public", table_name)
 
 
 # ----------------------------------------------------------------- offline
@@ -50,6 +56,7 @@ def test_result_summarises_a_failure():
 
 def test_run_table_extracts_loads_and_commits():
 	with sessions() as (source, dw):
+		fresh(dw)
 		result = run_table(source, dw, "iccoli", target_for())
 
 		assert result.ok
@@ -67,6 +74,7 @@ def test_run_table_extracts_loads_and_commits():
 
 def test_run_table_is_idempotent():
 	with sessions() as (source, dw):
+		fresh(dw)
 		first = run_table(source, dw, "iccoli", target_for())
 		second = run_table(source, dw, "iccoli", target_for())
 
@@ -85,6 +93,7 @@ def test_a_failing_load_leaves_the_watermark_unmoved():
 			raise RuntimeError("staging is on fire")
 
 	with sessions() as (source, dw):
+		fresh(dw)
 		watermarks = WatermarkManager(meta_db_conn=dw)
 		try:
 			run_table(source, dw, "iccoli", target_for(), loader=ExplodingLoader(dw), watermark_manager=watermarks)
@@ -126,6 +135,7 @@ def test_run_source_system_can_stop_at_the_first_failure():
 
 def test_run_source_system_loads_several_tables():
 	with sessions() as (source, dw):
+		fresh(dw, TABLE, "tb_action_info", "tb_menu_app")
 		targets = [target_for(), target_for("tb_action_info"), target_for("tb_menu_app")]
 		results = run_source_system(source, dw, "iccoli", targets=targets)
 

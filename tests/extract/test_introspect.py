@@ -42,6 +42,8 @@ def test_array_detection():
 def test_quote_ident_accepts_real_names():
 	assert quote_ident("tb_user_info") == '"tb_user_info"'
 	assert quote_ident("_loaded_at") == '"_loaded_at"'
+	# sibc.genetic_trait_info has Korean column names
+	assert quote_ident("원활") == '"원활"'
 
 
 def test_quote_ident_rejects_injection():

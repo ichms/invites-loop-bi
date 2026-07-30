@@ -11,7 +11,7 @@ from invites_loop_bi.extract import build_extractor
 from invites_loop_bi.extract.introspect import TableSchema
 from invites_loop_bi.extract.watermark import WatermarkManager
 from invites_loop_bi.load import StagingLoader
-from tests.db import sessions
+from tests.db import reset_staging, sessions
 from tests.fakes import StubWatermarkManager
 
 TABLE = "tb_action_mapper"  # small reference table, no personal data, composite key
@@ -30,6 +30,7 @@ def staging_count(dw, table_name=TABLE, schema="stg_iccoli"):
 
 def test_first_run_creates_staging_and_loads_every_row():
 	with sessions() as (source, dw):
+		reset_staging(dw, "iccoli", "public", TABLE)
 		loader = StagingLoader(dw)
 		extractor = build_extractor(
 			source, source_system="iccoli", target=target_for(), watermark_manager=StubWatermarkManager()
@@ -114,6 +115,7 @@ def test_full_refresh_truncates_before_loading():
 def test_a_column_added_upstream_is_added_to_staging():
 	"""Simulates source drift by creating staging one column short."""
 	with sessions() as (source, dw):
+		reset_staging(dw, "iccoli", "public", TABLE)
 		loader = StagingLoader(dw)
 		extractor = build_extractor(
 			source, source_system="iccoli", target=target_for(), watermark_manager=StubWatermarkManager()
@@ -141,6 +143,7 @@ def test_a_column_added_upstream_is_added_to_staging():
 
 def test_watermark_is_committed_only_after_the_load():
 	with sessions() as (source, dw):
+		reset_staging(dw, "iccoli", "public", TABLE)
 		watermarks = WatermarkManager(meta_db_conn=dw)
 		loader = StagingLoader(dw)
 		extractor = build_extractor(
@@ -203,6 +206,7 @@ def test_a_keyless_table_replays_without_duplicating():
 	from datetime import timedelta
 
 	with sessions("discovery") as (source, dw):
+		reset_staging(dw, "discovery", "discovery", KEYLESS_TABLE)
 		target = next(t for t in get_extraction_targets("discovery") if t["table_name"] == KEYLESS_TABLE)
 		loader = StagingLoader(dw)
 
@@ -285,6 +289,7 @@ def test_an_excluded_column_never_reaches_staging():
 
 def test_second_run_after_a_commit_reads_only_what_moved():
 	with sessions() as (source, dw):
+		reset_staging(dw, "iccoli", "public", TABLE)
 		watermarks = WatermarkManager(meta_db_conn=dw)
 		loader = StagingLoader(dw)
 
