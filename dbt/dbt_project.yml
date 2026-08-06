@@ -36,6 +36,12 @@ models:
       # ever exceeds ~15 minutes (IMPLEMENTATION_PLAN.md §3.1).
       +schema: marts
       +materialized: table
+      metrics:
+        # Metric definitions are VIEWS, not tables (D-10). A view is always
+        # consistent with the star beneath it, and "thin enough to review" is
+        # the property that keeps the KPI/PI/Bridge separation alive — a
+        # reviewer can read six lines and say "that's wrong".
+        +materialized: view
 
 seeds:
   invites_loop_bi:

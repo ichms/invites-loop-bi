@@ -366,15 +366,35 @@ then remaining facts; **never** the grain tests).
       135 tables, 1 dashboard, 37 saved questions, 1 user, 3 permission groups, 1 database
       connection. Recorded in the deploy README; goes in `RUNBOOK.ko.md` in Phase 5.
 
-### Phase 5 — metric views + handover (Days 11–14)
+### Phase 5 — metric views + handover (Days 11–14) — **DONE 2026-08-06 except Q-04**
 
-- [ ] `v_kpi_*` / `v_pi_*` / `v_bridge_*` views in `marts`, one metric per view, tier prefix
-      mandatory (D-10; the KPI/PI/Bridge separation is load-bearing).
-- [ ] `RUNBOOK.ko.md`, `METRICS.ko.md` (Korean, per language convention).
-- [ ] Named owner in writing (Q-04) — chase in parallel from Day 0; it is the plan's only
-      item with an external dependency and the log calls it the most likely failure mode.
-- [ ] Handover checklist from the log's §5, including the PII inventory and the versioned
-      allow-list.
+- [x] **7 `v_pi_*` views + 1 `v_bridge_*` view** in `marts`, materialised as views, one
+      metric per view (`dbt/models/marts/metrics/`). `dbt build` 184/184 green.
+- [x] **No `v_kpi_*` views, deliberately** (Q-08 + the log's §4.5). Every headline KPI —
+      30-day readmission, LOS, MSPB, Self-Pay Bad Debt — is a hospital-financial measure
+      with **zero source tables** here: no admission, discharge, claim or billing data
+      exists in the warehouse. NULL-returning KPI views were rejected because a metric that
+      always reads zero is worse than an absent one; someone eventually cites it.
+      `v_bridge_pi_to_kpi` records the gap **as data** — six rows naming each KPI, the PI
+      standing in for it, the interpretation caveat, and the data that would be required.
+      The register is the to-do list.
+- [x] **Two metric definitions were corrected by looking at their own output**, which is the
+      argument for thin reviewable views in one line:
+      (a) "share of users with ≥1 high-risk disease" read 86–94% every month — across 35
+      diseases almost everyone has one, so it could not move. Replaced by *disease load*
+      (count per user), which discriminates.
+      (b) that count then reported a maximum of **272** against a 35-disease catalog: it was
+      counting disease-*days*, not distinct diseases. Fixed to `count(distinct disease_id)`,
+      and an `accepted_range(0, 35)` test on the max now guards it — the average alone had
+      stayed under 35 and looked fine.
+- [x] `RUNBOOK.ko.md` and `METRICS.ko.md` (Korean, per the language convention) in the deploy
+      repo. The runbook is symptom-first, with a table mapping every custom test failure to
+      what it means and what to do — explicitly including "do not raise the threshold".
+- [x] Handover checklist as `HANDOVER.md` (repo root), covering the log's §5 list, the
+      reading order for a successor, the traps, and the open questions carried forward.
+- [ ] **Named owner in writing (Q-04) — STILL OPEN.** The only item here with an external
+      dependency, and the one the log calls the most likely failure mode. The owner table in
+      `RUNBOOK.ko.md` §6 is left blank on purpose rather than filled with a plausible name.
 
 ---
 

@@ -1,0 +1,93 @@
+# Metric views are thin by design, so their tests are thin too: the star
+# beneath them already carries the grain and FK tests. What is worth asserting
+# here is that a metric has not silently gone empty or produced an impossible
+# percentage — the two ways a dashboard lies without erroring.
+
+version: 2
+
+models:
+  - name: v_pi_coaching_adherence_daily
+    description: "PI: 코칭 순응도 (일별). 분모는 전달된 모든 활동 (철회분 포함)."
+    columns:
+      - name: ymd_date
+        data_tests: [not_null, unique]
+      - name: adherence_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 100}
+
+  - name: v_pi_coaching_adherence_by_domain
+    description: "PI: 도메인별 코칭 순응도."
+    columns:
+      - name: domain
+        data_tests: [not_null, unique]
+      - name: adherence_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 100}
+
+  - name: v_pi_app_engagement_daily
+    description: "PI: 앱 참여도 (일별). 액션 수가 아니라 사용자 수를 셉니다."
+    columns:
+      - name: action_date
+        data_tests: [not_null, unique]
+      - name: active_users
+        data_tests: [not_null]
+
+  - name: v_pi_measurement_participation_weekly
+    description: "PI: 측정 참여도 (주별). 주 시작은 월요일 (D-18)."
+    columns:
+      - name: week_start_date
+        data_tests: [not_null, unique]
+
+  - name: v_pi_population_risk_monthly
+    description: "PI: 인구집단 위험도 추이 (월별). IRS+ 는 백분위 순위이므로 추세만 해석."
+    columns:
+      - name: month_start_date
+        data_tests: [not_null, unique]
+      - name: mean_irs_plus
+        description: Percentile ranks are 1–100; a value outside that means the score contract changed.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1, max_value: 100}
+
+  - name: v_pi_high_risk_disease_load_monthly
+    description: "PI: 고위험 질환 부담 (월별). 고위험 = irs_score >= 80 (상위 20% 백분위). 사용자당 고위험 질환 '개수' 평균."
+    columns:
+      - name: month_start_date
+        data_tests: [not_null, unique]
+      - name: avg_high_risk_diseases
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 35}
+      - name: max_high_risk_diseases
+        description: >
+          Cannot exceed the 35-disease catalog. This bound is the test that
+          caught the original definition counting disease-DAYS rather than
+          distinct diseases — the average alone stayed under 35 and looked fine.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 35}
+
+  - name: v_pi_scoring_coverage_monthly
+    description: "PI: 점수 산출 커버리지 (월별). 다른 위험도 지표를 해석하기 전에 먼저 봐야 하는 지표."
+    columns:
+      - name: month_start_date
+        data_tests: [not_null, unique]
+      - name: coverage_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 100}
+
+  - name: v_bridge_pi_to_kpi
+    description: >
+      Bridge register: which PI stands in for which KPI, and what data is
+      missing. Static by design — it is a reviewable statement, not a query.
+    columns:
+      - name: kpi_name_kor
+        data_tests: [not_null, unique]
+      - name: bridge_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['blocked', 'proxy_available', 'partial']
