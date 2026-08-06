@@ -287,11 +287,16 @@ then remaining facts; **never** the grain tests).
       saturation) and interval aggregates (sleep, activity, steps) are excluded with reasons
       in the model header — mixing a sampling stream into a fact of discrete readings makes
       every unqualified count meaningless.
-      **`blood_glucose` deliberately excluded: the source column holds two units** — 20
-      readings at 5.3–6.9 (mmol/L) and 20 at 68–225 (mg/dL), with nothing marking which.
-      Restoring it needs either a per-row unit upstream or an owner-approved conversion rule
-      (×18.0182; the ranges do not overlap, so a threshold works — it is just not ours to
-      invent). 40 rows, 9 users.
+      **`blood_glucose` normalised to mg/dL (owner decision 2026-08-06).** The source column
+      holds two units with nothing marking which — 20 readings at 5.3–6.9 (mmol/L) and 20 at
+      68–225 (mg/dL). Values below 30 are converted (×18.0182) to mg/dL, the unit used
+      clinically in Korea and the US. The threshold sits in a wide empty gap (highest mmol/L
+      reading 6.94, lowest mg/dL reading 68) and is defensible on its own terms: 30 mg/dL is
+      profound hypoglycaemia, 30 mmol/L is 540 mg/dL. Validation: converted values interleave
+      with native ones into one coherent distribution (mean 101.0 mg/dL) rather than two
+      clusters. `assert_glucose_unit_gap_holds` **fails the build** if any reading lands in
+      the ambiguous 25–50 band, where the rule would be guessing — the fix then is a per-row
+      unit upstream, not a wider threshold.
       Same reading can arrive under several transaction ids (36 groups, device re-sync);
       the fact collapses them by earliest transaction, and
       `assert_measurement_no_conflicting_readings` **fails the build** if the collapsed rows
@@ -349,6 +354,6 @@ then remaining facts; **never** the grain tests).
 | N-02 cohort scoping | **Decided (row_filter at EL) and implemented 2026-08-06** — §3.4 |
 | **NEW: unmapped active cohort users** | Now **two**: `2725eece…` (Phase 0) and `fbe82bc5…` (Phase 1) — both real members, both joined 2026-05-01, no iccoli mapping. Owner follow-up required; `assert_unmapped_cohort_users_pinned` fails loudly if the set changes |
 | **NEW: dim_disease row count** | **Reconciled 2026-08-06:** all 35 catalog diseases are scored, plus exactly 9 scored-but-not-displayed extras (macular degeneration, brain aneurysm, cardiac arrhythmia, endometrial cancer, endometriosis, hepatocellular carcinoma, lung cancer, Parkinson's, PCOS). Owner: focus stays on the 35 — `dim_disease` seeds from the catalog; fact rows for the 9 simply don't join to the dim and are not user-facing |
-| **NEW: glucose unit ambiguity** | `disc_lifelog_user_bloodglucose.glucose` mixes mmol/L and mg/dL in one column (40 rows). Excluded from `fct_measurement`; needs a per-row unit upstream or an approved conversion rule |
+| **NEW: glucose unit ambiguity** | **Resolved 2026-08-06:** owner chose normalisation to mg/dL; `<30 → ×18.0182` in staging, guarded by `assert_glucose_unit_gap_holds`. A per-row unit from the source would still be better than a threshold — worth raising with the Discovery team |
 | **NEW: deployment site code** | `dim_deployment_site.site_id = 'KR_LOOP_PILOT'` is a placeholder — no source carries a site id. Confirm before it appears as a dashboard label |
 | **NEW: `login_pw` in warehouse** | **Resolved 2026-08-06:** owner decided to discard the direct-identifier classes; `scripts/20260806_pii_cleanup_phase1.sql` (executed) dropped 26 columns across ichms/sibc/iccoli and stripped name keys from frozen legacy payloads; matching `exclude_columns` added to all three target configs. Remaining open items in PII_INVENTORY.md §Resolution status (ichms table-scope question, R-7, R-8, upstream `user_name` key) |

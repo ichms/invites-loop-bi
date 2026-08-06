@@ -107,9 +107,19 @@ models:
                   - body_fat_percentage
                   - grip_strength_left
                   - grip_strength_right
+                  - blood_glucose
       - name: metric_value
-        description: Null readings are dropped in staging — an absent measurement is not a measurement of nothing.
+        description: >
+          Null readings are dropped in staging — an absent measurement is not a
+          measurement of nothing. Glucose is normalised to mg/dL in staging
+          (owner decision 2026-08-06); every other metric arrives in one unit.
         data_tests: [not_null]
+      - name: metric_unit
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['mmHg', 'bpm', 'kg', 'cm', 'kg/m2', '%', 'mg/dL']
       - name: device_type_id
         data_tests:
           - relationships:

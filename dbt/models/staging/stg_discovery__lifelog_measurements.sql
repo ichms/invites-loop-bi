@@ -19,7 +19,6 @@
 --                 not point-in-time readings — a different grain.
 --   food, meal    nutrition, a different grain again (and meal images are not
 --                 extracted at all).
---   glucose       mixed units in one column — see the note further down.
 --
 -- DEDUPE: these tables have no primary key upstream. Exact duplicate rows exist
 -- (re-deliveries) and `distinct` removes them. body_info additionally has 27
@@ -94,15 +93,35 @@ grip_strength as (
 
 ),
 
--- blood_glucose is DELIBERATELY ABSENT. The source column carries two units
--- with nothing to distinguish them: 20 readings sit at 5.3–6.9 (mmol/L) and 20
--- at 68–225 (mg/dL), measured 2026-08-06. Any average over that column is
--- meaningless, and a plausible-looking wrong number is the exact failure the
--- test layer exists to prevent — so it stays out until either the source
--- records a unit per row, or an owner approves a conversion rule (mmol/L →
--- mg/dL is ×18.0182, and the two ranges do not physiologically overlap, so a
--- threshold rule is possible — it is just not mine to invent). 40 rows across
--- 9 users, so nothing analytically load-bearing is lost meanwhile.
+blood_glucose as (
+
+	-- The source column carries TWO units with nothing marking which: 20
+	-- readings at 5.3–6.9 (mmol/L) and 20 at 68–225 (mg/dL), measured
+	-- 2026-08-06. Owner decision 2026-08-06: normalise everything to mg/dL,
+	-- the unit used clinically in Korea and the US.
+	--
+	-- Detection threshold = 30, and the gap it sits in is wide: the highest
+	-- mmol/L reading is 6.94 and the lowest mg/dL reading is 68. It is also
+	-- defensible beyond this dataset — 30 mg/dL is profound hypoglycaemia
+	-- (medical emergency, not something a home meter logs quietly), while
+	-- 30 mmol/L is 540 mg/dL, extreme hyperglycaemia. Anything below 30 is
+	-- therefore far more plausibly mmol/L than mg/dL.
+	--
+	-- The heuristic polices itself: assert_glucose_unit_gap_holds fails the
+	-- build if a reading ever lands in the ambiguous 25–50 band, where the rule
+	-- would be guessing rather than reading a clear gap. Zero such rows today.
+	select distinct
+		user_lifelog_sn,
+		measured_dt as measured_at,
+		'blood_glucose' as metric_code,
+		case
+			when glucose::numeric < 30 then round(glucose::numeric * 18.0182, 1)
+			else glucose::numeric
+		end as metric_value,
+		'mg/dL' as metric_unit
+	from {{ source('stg_discovery', 'disc_lifelog_user_bloodglucose') }}
+
+),
 
 unioned as (
 
@@ -110,6 +129,7 @@ unioned as (
 	union all select * from body_info
 	union all select * from body_fat
 	union all select * from grip_strength
+	union all select * from blood_glucose
 
 )
 
