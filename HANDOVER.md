@@ -23,33 +23,22 @@ Two repos:
 | 5 | `MB_ENCRYPTION_SECRET_KEY` stored somewhere durable | **owner action** | Currently only in the local `.env`. Must go to a password manager or Key Vault |
 | 6 | `RUNBOOK.ko.md` — 이게 안 될 때 | **done** | `../invites-loop-bi-deploy/RUNBOOK.ko.md` |
 | 7 | `METRICS.ko.md` — 메트릭 추가하는 법 | **done** | `../invites-loop-bi-deploy/METRICS.ko.md` |
-| 8 | **Named owner, in writing (Q-04)** | **interim** | Changmin Ahn (ACH), provisionally, 2026-08-06. Permanent owner deferred by decision — see below |
+| 8 | Named owner, in writing (Q-04) | **interim** | Changmin Ahn (ACH), 2026-08-06. Permanent assignment deferred — see below |
 | 9 | PII inventory across all source schemas | **done** | `PII_INVENTORY.md` — 123 tables, 1,246 columns classified |
 | 10 | JSONB allow-list committed + drift test wired into `dbt build` | **done** | `dbt/seeds/jsonb_allowlist.csv` + `test_jsonb_keys_in_allowlist` |
 
 ---
 
-## The one that matters most (Q-04) — deferred, with an interim holder
+## Ownership (Q-04)
 
-**Owner decision 2026-08-06: too early to name a permanent owner.** Until then,
-Changmin Ahn (ACH) holds every line in the `RUNBOOK.ko.md` §6 table.
+**Owner decision 2026-08-06: naming a permanent owner is deferred.** Changmin
+Ahn (ACH) holds every line in the `RUNBOOK.ko.md` §6 table in the meantime, so
+there is always someone to call.
 
-That closes the "nobody knows who to call today" problem and leaves the real one
-open, so state it plainly: **the interim holder is the person handing this over
-and leaving.** An owner table naming the departing author is, on the day they
-leave, an empty table. This is a deferral, not a resolution.
+**Revisit when** — whichever comes first: handover begins, the holder changes,
+or the data function is reorganised.
 
-**Revisit trigger** — whichever comes first:
-
-1. handover begins, or
-2. the current holder's departure is confirmed, or
-3. any reorganisation that changes who runs the data function.
-
-The decision log calls this the most likely failure mode of the whole effort,
-and nothing in five phases of work changed that — it is the only item here that
-cannot be solved by writing code.
-
-Concretely, the permanent owner must own:
+Whoever takes it on permanently owns:
 
 1. The Metabase container and its application-database backups.
 2. `MB_ENCRYPTION_SECRET_KEY` — without it the backups are unrestorable.
@@ -90,7 +79,7 @@ Concretely, the permanent owner must own:
 | Item | State |
 |---|---|
 | Q-03 existing BI tool | Never answered; would only have changed Phase 4 |
-| Q-04 named owner | **Deferred 2026-08-06**; interim holder Changmin Ahn (ACH). Still blocking for handover — see the revisit trigger above |
+| Q-04 named owner | Deferred 2026-08-06; interim holder Changmin Ahn (ACH) |
 | Q-13 production hosting | Deliberately deferred; everything is hosting-independent |
 | Unmapped cohort users | 2 active members with no iccoli link — owner follow-up |
 | Deployment site code | `KR_LOOP_PILOT` is a placeholder; confirm before it labels a dashboard |
