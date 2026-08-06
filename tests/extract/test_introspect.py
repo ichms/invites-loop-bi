@@ -184,6 +184,9 @@ KNOWN_MISSING_PRIMARY_KEY = frozenset({
 	"discovery.disc_lifelog_user_meal",
 	"discovery.disc_lifelog_user_oxygen_saturation",
 	"discovery.disc_lifelog_user_sleep_detail",
+	# Added as a target 2026-08-06 alongside disc_lifelog_user_info; keyless
+	# like its sibling per-measurement tables.
+	"discovery.disc_lifelog_user_step",
 	"discovery.disc_lifestyle_survey_question_option",
 })
 

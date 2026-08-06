@@ -85,9 +85,32 @@ DISCOVERY_EXTRACTION_TARGETS = [
 		"watermark_col": "measured_dt",
 		"fallback_watermark_col": None,
 	},
-	# disc_lifelog_user_info is deliberately NOT extracted: it holds every lifelog
-	# transaction (23 GB, ~206 kB per row) and the same ground can be covered from
-	# the per-measurement tables below.
+	{
+		# The lifelog parent. Every per-measurement table below keys on
+		# `user_lifelog_sn` and carries NO user_id, so without this table not one
+		# landed measurement can be attributed to a user -- fct_measurement is
+		# impossible without it (found 2026-08-06 while building Phase 3).
+		#
+		# It was previously skipped for size (23 GB, ~206 kB/row), but the weight
+		# is entirely `lifelog_raw_data`; excluding that one column leaves ~60
+		# bytes of columns that matter -- the user linkage, the device/platform
+		# codes and the measurement location. Same trade already made for
+		# disc_lifelog_user_meal's base64 images. The typed child tables carry
+		# the readings themselves, so the raw payload is redundant as well as
+		# huge.
+		"schema_name": "discovery",
+		"table_name": "disc_lifelog_user_info",
+		"watermark_col": "ins_dt",
+		"fallback_watermark_col": None,
+		"exclude_columns": ("lifelog_raw_data",),
+	},
+	{
+		# Same gap: a per-measurement table that was never a target.
+		"schema_name": "discovery",
+		"table_name": "disc_lifelog_user_step",
+		"watermark_col": "measured_dt",
+		"fallback_watermark_col": None,
+	},
 	{
 		"schema_name": "discovery",
 		"table_name": "disc_lifelog_user_meal",

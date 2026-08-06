@@ -22,10 +22,11 @@ setup_env.sh
 # Claude configs
 .claude/
 
-# Local documentation for context
-docs/
-data/
-analysis/
+# Local documentation for context. Root-anchored on purpose: an unanchored
+# `docs/` also swallowed dbt/docs/, where the committed dbt documentation lives.
+/docs/
+/data/
+/analysis/
 
 # Notebook exports (rebuild with nbconvert)
 analysis/*.html

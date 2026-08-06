@@ -32,6 +32,17 @@ sources:
       - name: disc_health_info_meta_detail
       - name: disc_health_user_info
       - name: disc_irs_user_info
+      - name: disc_lifelog_user_info
+        description: >
+          The lifelog parent: the ONLY table linking a measurement to a user_id
+          (every per-measurement table below keys on user_lifelog_sn alone).
+          Added as an extraction target 2026-08-06 with `lifelog_raw_data`
+          excluded — that column is the entire 23 GB weight and is redundant
+          with the typed child tables.
+        freshness:
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 72, period: hour}
+      - name: disc_lifelog_user_step
       - name: disc_lifelog_user_activity
       - name: disc_lifelog_user_bloodglucose
       - name: disc_lifelog_user_bloodpressure

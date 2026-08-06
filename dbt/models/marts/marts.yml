@@ -52,10 +52,140 @@ models:
         data_tests: [not_null, unique]
 
   - name: dim_action
-    description: App-action catalogue behind fct_app_action (Phase 3).
+    description: App-action catalogue behind fct_app_action.
     columns:
       - name: action_no
         data_tests: [not_null, unique]
+
+  - name: dim_device_type
+    description: Measurement device types, labelled from ichms com_code (parent 20301300). Makes the cuff-vs-smartwatch density difference sliceable.
+    columns:
+      - name: device_type_code
+        data_tests: [not_null, unique]
+      - name: device_type_name_kor
+        data_tests: [not_null]
+
+  - name: fct_measurement
+    description: >
+      GRAIN: user × measured_at × metric. Discrete lifelog readings (BP, body
+      composition, grip strength, glucose) in tall form. Continuous streams and
+      interval aggregates are excluded — see the staging model header.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, measured_at, metric_code]
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: measured_at
+        data_tests: [not_null]
+      - name: measured_date
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: metric_code
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - systolic_bp
+                  - diastolic_bp
+                  - pulse
+                  - weight
+                  - height
+                  - bmi
+                  - skeletal_muscle_mass
+                  - body_fat_mass
+                  - body_fat_percentage
+                  - grip_strength_left
+                  - grip_strength_right
+      - name: metric_value
+        description: Null readings are dropped in staging — an absent measurement is not a measurement of nothing.
+        data_tests: [not_null]
+      - name: device_type_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_device_type')
+                field: device_type_code
+              config:
+                where: "device_type_id is not null"
+
+  - name: fct_coaching_event
+    description: >
+      GRAIN: one JITAI activity delivery (activity_row_id). Delivery, response
+      and latency. Non-completions and withdrawn activities are kept — they are
+      the denominator of every adherence metric.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [activity_row_id]
+    columns:
+      - name: activity_row_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: ymd_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: is_completed
+        data_tests: [not_null]
+      - name: response_latency_minutes
+        description: Negative latency would mean a completion before delivery — a clock or ordering bug, not a fast user.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+              config:
+                where: "response_latency_minutes is not null"
+                severity: warn
+
+  - name: fct_app_action
+    description: "GRAIN: one app action (action_log_no). The fact that needed the Q-10 key translation; done in staging."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [action_log_no]
+    columns:
+      - name: action_log_no
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: action_no
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_action')
+                field: action_no
+      - name: action_date
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
 
   - name: fct_user_day
     description: >

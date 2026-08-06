@@ -9,17 +9,20 @@ PostgreSQL source systems into a staging/data-warehouse layer, then transforms i
 It runs as **Apache Airflow** DAGs (the `dags/` folder is the Airflow DAGs directory).
 Python >= 3.13, managed with **uv**, `src/` layout.
 
-> **State of the repo:** extract and load are implemented, tested against the real databases,
-> and wired into DAGs. The transform layer is **dbt** (`dbt/` at the repo root); the **staging
-> layer and the core marts are built** — sources over all five landing schemas, staging views,
-> allow-list seed + drift test, five dims and two facts (`fct_user_day`,
-> `fct_user_disease_day`) with grain and FK tests. `dbt build` is 110/110 green. **Next:
-> Phase 3** — remaining facts (`fct_coaching_event`, `fct_measurement`, `fct_app_action`), the
-> `transform_dbt_build` DAG, and real schedules on the five ELT DAGs. Modelling decisions live
-> in `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` (which records where
+> **State of the repo:** extract, load and transform are all implemented and tested against
+> the real databases. The transform layer is **dbt** (`dbt/` at the repo root): sources over
+> all five landing schemas, staging views, allow-list seed + drift test, and the full star —
+> six dims and five facts (`fct_user_day`, `fct_user_disease_day`, `fct_measurement`,
+> `fct_coaching_event`, `fct_app_action`) with grain and FK tests. `dbt build` is 149/149
+> green; `pytest` 117/117. Orchestration is wired: five ELT DAGs at 01:00 KST,
+> `transform_dbt_build` at 02:00 KST. **Next: Phase 4** — Metabase locally (deploy repo,
+> read-only `bi_reader` role on `marts`, three dashboards), then Phase 5 metric views
+> (`v_kpi_*`/`v_pi_*`/`v_bridge_*`) and the Korean runbook. Modelling decisions live in
+> `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` (which records where
 > measurement overrode the log — §3), and the Q-11 column classification in `PII_INVENTORY.md`
-> — read them before touching `dbt/`. `main.py` and `src/pipeline.py` are leftover empty
-> stubs; the real entry point is `src/invites_loop_bi/pipeline.py`.
+> — read them before touching `dbt/`. Generated dbt documentation is committed at
+> `dbt/docs/dbt_docs.html`. `main.py` and `src/pipeline.py` are leftover empty stubs; the real
+> entry point is `src/invites_loop_bi/pipeline.py`.
 
 ## Commands
 

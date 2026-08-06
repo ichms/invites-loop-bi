@@ -267,14 +267,45 @@ then remaining facts; **never** the grain tests).
       header comment), plus `relationships` tests on every FK — the dim_disease one scoped
       `where: is_in_catalog` because the 9 extras have no dim row by design.
 
-### Phase 3 — remaining facts + orchestration (Days 6–7)
+### Phase 3 — remaining facts + orchestration (Days 6–7) — **DONE 2026-08-06** (`dbt build`: 149/149; `pytest`: 117/117)
 
-- [ ] `fct_coaching_event`, `fct_measurement` (with `device_type` FK), `fct_app_action`
-      (the one model needing key translation — already done in its staging model).
-- [ ] `transform_dbt_build` DAG (§3.3); real schedules on the five ELT DAGs; `--fail-fast` so
-      a broken grain stops the build loudly (governing constraint, corollary 1).
-- [ ] `dbt docs generate --static` → single self-contained HTML, committed per release (Q-07:
-      findable = in the repo the junior already has; no hosting dependency).
+- [x] `fct_coaching_event` (237,598 rows, one JITAI activity delivery each; 45.8% completed).
+      Non-completions and withdrawn activities are kept deliberately — they are the
+      denominator of every adherence metric. Carries `is_completed` and
+      `response_latency_minutes`.
+- [x] `fct_measurement` (25,433 rows, 314 users) + `dim_device_type` (8 types, labelled from
+      ichms `com_code`). **Blocker found and fixed:** every per-measurement lifelog table keys
+      on `user_lifelog_sn` and carries **no user_id**, and the parent
+      `disc_lifelog_user_info` was explicitly *not* an extraction target — so every landed
+      measurement was unattributable. It is now a target with `lifelog_raw_data` excluded,
+      which is what the original 23 GB objection was really about (landed size: 18 MiB).
+      `disc_lifelog_user_step` was missing for the same reason and was added too.
+      The old guard test asserting the table is *not* a target has been inverted to assert
+      it *is*, without its raw payload.
+      Tall by `metric_code` (11 metrics), `device_type_id` FK so the cuff-vs-smartwatch
+      density difference is sliceable. Continuous streams (heartrate 8.5M samples, oxygen
+      saturation) and interval aggregates (sleep, activity, steps) are excluded with reasons
+      in the model header — mixing a sampling stream into a fact of discrete readings makes
+      every unqualified count meaningless.
+      **`blood_glucose` deliberately excluded: the source column holds two units** — 20
+      readings at 5.3–6.9 (mmol/L) and 20 at 68–225 (mg/dL), with nothing marking which.
+      Restoring it needs either a per-row unit upstream or an owner-approved conversion rule
+      (×18.0182; the ranges do not overlap, so a threshold works — it is just not ours to
+      invent). 40 rows, 9 users.
+      Same reading can arrive under several transaction ids (36 groups, device re-sync);
+      the fact collapses them by earliest transaction, and
+      `assert_measurement_no_conflicting_readings` **fails the build** if the collapsed rows
+      ever disagree in value.
+- [x] `fct_app_action` (256,904 rows) — the one fact needing Q-10 key translation, already
+      done in its staging model.
+- [x] `transform_dbt_build` DAG: `dbt source freshness` (non-blocking — a stale source must be
+      loud, but yesterday's numbers rebuilt beat no numbers) then `dbt build --fail-fast`,
+      02:00 KST. The five ELT DAGs now run 01:00 KST (was `SCHEDULE = None`); KST rather than
+      UTC because `ymd` is a business date on a KST midnight boundary. All six DAGs verified
+      to parse with no import errors.
+- [x] `dbt docs generate --static` → `dbt/docs/dbt_docs.html`, committed (Q-07). Note: the
+      root `.gitignore` had an unanchored `docs/` rule that also swallowed `dbt/docs/`; it is
+      now root-anchored (`/docs/`).
 
 ### Phase 4 — Metabase, locally (Days 8–10)
 
@@ -318,4 +349,6 @@ then remaining facts; **never** the grain tests).
 | N-02 cohort scoping | **Decided (row_filter at EL) and implemented 2026-08-06** — §3.4 |
 | **NEW: unmapped active cohort users** | Now **two**: `2725eece…` (Phase 0) and `fbe82bc5…` (Phase 1) — both real members, both joined 2026-05-01, no iccoli mapping. Owner follow-up required; `assert_unmapped_cohort_users_pinned` fails loudly if the set changes |
 | **NEW: dim_disease row count** | **Reconciled 2026-08-06:** all 35 catalog diseases are scored, plus exactly 9 scored-but-not-displayed extras (macular degeneration, brain aneurysm, cardiac arrhythmia, endometrial cancer, endometriosis, hepatocellular carcinoma, lung cancer, Parkinson's, PCOS). Owner: focus stays on the 35 — `dim_disease` seeds from the catalog; fact rows for the 9 simply don't join to the dim and are not user-facing |
+| **NEW: glucose unit ambiguity** | `disc_lifelog_user_bloodglucose.glucose` mixes mmol/L and mg/dL in one column (40 rows). Excluded from `fct_measurement`; needs a per-row unit upstream or an approved conversion rule |
+| **NEW: deployment site code** | `dim_deployment_site.site_id = 'KR_LOOP_PILOT'` is a placeholder — no source carries a site id. Confirm before it appears as a dashboard label |
 | **NEW: `login_pw` in warehouse** | **Resolved 2026-08-06:** owner decided to discard the direct-identifier classes; `scripts/20260806_pii_cleanup_phase1.sql` (executed) dropped 26 columns across ichms/sibc/iccoli and stripped name keys from frozen legacy payloads; matching `exclude_columns` added to all three target configs. Remaining open items in PII_INVENTORY.md §Resolution status (ichms table-scope question, R-7, R-8, upstream `user_name` key) |

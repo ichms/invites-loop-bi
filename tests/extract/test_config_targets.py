@@ -157,10 +157,26 @@ def test_iccoli_identity_columns_never_leave_the_source():
 	assert {"device_token", "game_token", "apns_push_to_start_token", "apns_la_token"} <= device
 
 
-def test_the_lifelog_transaction_table_is_not_a_target():
-	"""disc_lifelog_user_info (23 GB) is covered by the per-measurement tables."""
-	tables = {t["table_name"] for t in get_extraction_targets("discovery")}
-	assert "disc_lifelog_user_info" not in tables
+def test_the_lifelog_transaction_table_is_extracted_without_its_raw_payload():
+	"""
+	disc_lifelog_user_info is a target, but never with `lifelog_raw_data`.
+
+	This test used to assert the opposite -- that the table is not extracted at
+	all, on the grounds that it is 23 GB and "covered by the per-measurement
+	tables". Half of that was wrong: every per-measurement table keys on
+	`user_lifelog_sn` and carries no user_id, so without this parent not one
+	measurement can be attributed to a user (found 2026-08-06 building
+	fct_measurement). The other half was really about one column -- excluding
+	`lifelog_raw_data` takes the table from 23 GB to 18 MiB.
+
+	So the guard now protects the property that actually matters: the linkage
+	comes in, the payload stays out.
+	"""
+	targets = {t["table_name"]: t for t in get_extraction_targets("discovery")}
+	assert "disc_lifelog_user_info" in targets, "fct_measurement cannot attribute readings without it"
+	assert "lifelog_raw_data" in set(targets["disc_lifelog_user_info"]["exclude_columns"]), (
+		"lifelog_raw_data is the entire 23 GB; it is redundant with the typed child tables"
+	)
 
 
 def test_unknown_source_system_raises():

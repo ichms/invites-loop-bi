@@ -18,18 +18,26 @@ only advance after a table's rows are committed to staging, which makes a retry
 replay the same window rather than skip it.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
+import pendulum
 from airflow.sdk import dag, get_current_context, task
 
 from invites_loop_bi.config import SOURCE_SYSTEMS, get_extraction_targets
 from invites_loop_bi.connections import open_connections
 from invites_loop_bi.pipeline import run_table
 
-#: Manual triggering only until the transform layer exists; then pick a real
-#: schedule (incremental runs are cheap, so "@hourly" is a fine starting point).
-SCHEDULE = None
-START_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+KST = pendulum.timezone("Asia/Seoul")
+
+#: 01:00 KST, one hour ahead of `transform_dbt_build` (02:00 KST). KST rather
+#: than UTC because `ymd` is a business date on a KST midnight boundary -- a UTC
+#: schedule would straddle it.
+#:
+#: Daily, not hourly: the marts rebuild once a day, so more frequent extraction
+#: would only add source-database load for numbers nobody reads until tomorrow.
+#: Raise the frequency when something downstream actually needs intraday data.
+SCHEDULE = "0 1 * * *"
+START_DATE = datetime(2026, 1, 1, tzinfo=KST)
 
 #: Tables loaded concurrently per system. Every one of them holds a source
 #: connection and a COPY, so this is the main dial for source DB load.
