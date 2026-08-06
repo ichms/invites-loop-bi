@@ -312,7 +312,7 @@ then remaining facts; **never** the grain tests).
       root `.gitignore` had an unanchored `docs/` rule that also swallowed `dbt/docs/`; it is
       now root-anchored (`/docs/`).
 
-### Phase 4 — Metabase, locally (Days 8–10) — **infrastructure DONE 2026-08-06; two items blocked on an admin credential**
+### Phase 4 — Metabase, locally (Days 8–10) — **DONE 2026-08-06**
 
 - [x] `invites-loop-bi-deploy` repo created at `../invites-loop-bi-deploy` (sibling), the
       log's layout exactly. Colima notes are in its README first section, including the
@@ -332,16 +332,35 @@ then remaining facts; **never** the grain tests).
       `default_transaction_read_only`, a 120s `statement_timeout`, and an idle-transaction
       timeout; `02_grants.sql` ends with a block that **raises** if `bi_reader` can reach any
       schema but `marts`.
-- [ ] **BLOCKED — role not yet created.** No credential available on this machine has
-      `CREATEROLE`: `analytics_user` (all five `pg_service` entries resolve to it,
-      `invites_dev`, or `iccoli`) is not a member of `azure_pg_admin` or `postgres`. Needs an
-      Azure admin account to run `01_readonly_role.sql` once; `02_grants.sql` then runs as
-      `analytics_user`, which owns `marts`.
-- [ ] **BLOCKED (downstream of the role):** warehouse connection in Metabase, Planning Team
-      permission group (query builder on marts, **native SQL off**, D-17), and the three
-      dashboards. Wiring Metabase to a privileged account in the meantime was rejected —
-      that is exactly the hole D-16 exists to close, and a "temporary" credential persists
-      encrypted in the app DB.
+- [x] **`bi_reader` created 2026-08-06** after the admin granted `analytics_user` CREATEROLE.
+      Two PostgreSQL constraints shaped the final script: `SUPERUSER`/`REPLICATION`/
+      `BYPASSRLS` need a superuser *even to turn off*, and PG16+ requires holding an
+      attribute to revoke it on someone else. So the script sets only what a CREATEROLE
+      holder may set and **proves** the rest — stronger than a blind `ALTER`, since it also
+      fires if the role acquires a privileged attribute by another route.
+      `public` cannot be closed from here either (owned by `azure_pg_admin`, USAGE held by
+      the `PUBLIC` pseudo-role, so `REVOKE` is a silent no-op as `analytics_user`); it is
+      instead asserted **empty and non-writable**, with an explicit admin command recorded
+      for the day that stops being true.
+      **Isolation verified by connecting as the role:** reads `marts` (404 users, 11 tables);
+      `permission denied` on `stg_sibc`, `stg_iccoli`, `stg_ichms`, `staging`; writes
+      rejected by `default_transaction_read_only`.
+- [x] Warehouse connection added in Metabase as `bi_reader`, schema filter `marts`; 11 tables
+      synced. Sample H2 database removed so demo data cannot be mistaken for real.
+- [x] Permission groups: **Planning Team = query builder, native SQL off** (D-17); All Users
+      cannot create queries. **Finding: `view-data: blocked` is Enterprise-only** (HTTP 402
+      on OSS), so group permissions *cannot* be what keeps anyone away from raw PII — the
+      `bi_reader` role is, exactly as D-16 intended. Recorded in the deploy README.
+- [x] **Three dashboards** (Korean, per the language convention): 코호트 개요 / 질환 위험도 /
+      참여 및 코칭, 11 cards, all returning data. Every card is a **query-builder** question
+      rather than native SQL, so a Planning Team member can open one and see how it was
+      built. Cross-checked against direct SQL (404 cohort, 2 unmapped, 128,816 coaching
+      non-completions, 2,933 weight readings) and the month buckets render at `+09:00`,
+      confirming `MB_REPORT_TIMEZONE` is live.
+      Note: the log rejects *scripting dashboards for reproducibility* (§4.3) — these were
+      authored once through the API as a faster substitute for clicking, and no provisioning
+      script is kept, so the rationale (don't invest in the cheapest layer; content lives in
+      the app DB) holds.
 - [x] `backup.sh` / `restore.sh`, and **the restore was actually performed** (D-15):
       `metabase_app_20260806_140926.sql.gz` (124K) restored into a throwaway container →
       135 tables, 1 dashboard, 37 saved questions, 1 user, 3 permission groups, 1 database
@@ -374,7 +393,7 @@ then remaining facts; **never** the grain tests).
 | N-02 cohort scoping | **Decided (row_filter at EL) and implemented 2026-08-06** — §3.4 |
 | **NEW: unmapped active cohort users** | Now **two**: `2725eece…` (Phase 0) and `fbe82bc5…` (Phase 1) — both real members, both joined 2026-05-01, no iccoli mapping. Owner follow-up required; `assert_unmapped_cohort_users_pinned` fails loudly if the set changes |
 | **NEW: dim_disease row count** | **Reconciled 2026-08-06:** all 35 catalog diseases are scored, plus exactly 9 scored-but-not-displayed extras (macular degeneration, brain aneurysm, cardiac arrhythmia, endometrial cancer, endometriosis, hepatocellular carcinoma, lung cancer, Parkinson's, PCOS). Owner: focus stays on the 35 — `dim_disease` seeds from the catalog; fact rows for the 9 simply don't join to the dim and are not user-facing |
-| **NEW: no CREATEROLE credential** | Blocks `bi_reader`, and therefore the Metabase warehouse connection, permission groups and dashboards. Needs an Azure admin to run `sql/01_readonly_role.sql` once (Phase 4) |
+| **NEW: no CREATEROLE credential** | **Resolved 2026-08-06:** admin granted `analytics_user` CREATEROLE; `bi_reader` created and verified. Residual: `public` still carries a `PUBLIC` USAGE grant that only an admin can revoke — asserted empty and non-writable instead |
 | **NEW: glucose unit ambiguity** | **Resolved 2026-08-06:** owner chose normalisation to mg/dL; `<30 → ×18.0182` in staging, guarded by `assert_glucose_unit_gap_holds`. A per-row unit from the source would still be better than a threshold — worth raising with the Discovery team |
 | **NEW: deployment site code** | `dim_deployment_site.site_id = 'KR_LOOP_PILOT'` is a placeholder — no source carries a site id. Confirm before it appears as a dashboard label |
 | **NEW: `login_pw` in warehouse** | **Resolved 2026-08-06:** owner decided to discard the direct-identifier classes; `scripts/20260806_pii_cleanup_phase1.sql` (executed) dropped 26 columns across ichms/sibc/iccoli and stripped name keys from frozen legacy payloads; matching `exclude_columns` added to all three target configs. Remaining open items in PII_INVENTORY.md §Resolution status (ichms table-scope question, R-7, R-8, upstream `user_name` key) |
