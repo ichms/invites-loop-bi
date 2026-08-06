@@ -11,6 +11,18 @@ dependencies = [
 ]
 
 [dependency-groups]
+# Ad-hoc analysis over the warehouse (notebooks under analysis/). Deliberately kept
+# out of `dependencies`: the ELT path moves rows as `COPY ... CSV` bytes and must not
+# grow a dataframe dependency — see the note above and extract/introspect.py.
+analysis = [
+	"jupyter>=1.1.1",
+	"matplotlib>=3.11.1",
+	"nbconvert>=7.17.1",
+	"openpyxl>=3.1.5",
+	"pandas>=3.0.5",
+	"scipy>=1.18.0",
+	"statsmodels>=0.14.6",
+]
 # Airflow is the runtime environment rather than a library this package imports;
 # it lives here so `uv sync` keeps a working local DAG setup without pinning
 # production to whatever the image ships.
@@ -21,7 +33,26 @@ dev = [
 	"apache-airflow-providers-postgres>=6",
 	"pytest>=8",
 ]
+# The T of the ELT: dbt runs as a CLI (`dbt build --project-dir dbt`), invoked
+# by Airflow's BashOperator -- like Airflow itself, an environment rather than a
+# library this package imports. Pinned per decision log D-03.
+transform = [
+	"dbt-core~=1.10.0",
+	"dbt-postgres~=1.9.0",
+]
 
+
+[build-system]
+# Without this section uv treats the project as non-installable and a plain
+# `uv sync` prunes the package right out of the venv (imports then fail with
+# ModuleNotFoundError until someone reinstalls it by hand).
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+# Plain `uv sync` should keep all groups installed, otherwise it prunes the
+# notebook/transform toolchains every time someone syncs for pipeline work.
+default-groups = ["dev", "analysis", "transform"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

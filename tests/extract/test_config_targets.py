@@ -19,6 +19,7 @@ REQUIRED_KEYS = {
 	"watermark_col",
 	"fallback_watermark_col",
 	"exclude_columns",
+	"row_filter",
 }
 
 
@@ -62,7 +63,7 @@ def test_a_duplicate_declaration_is_collapsed_to_the_first():
 	duplicate = {**original[0], "watermark_col": "create_datetime"}
 	EXTRACTION_TARGETS["iccoli"] = [*original, duplicate]
 	try:
-		targets = get_extraction_targets("iccoli")
+		targets = get_extraction_targets("iccoli", include_full_refresh=False)
 		keys = [(t["schema_name"], t["table_name"]) for t in targets]
 		assert len(keys) == len(set(keys)), "the duplicate was not collapsed"
 		assert len(targets) == len(original)
@@ -106,6 +107,54 @@ def test_the_meal_payload_column_is_excluded():
 	# edits and soft deletes only show up in upd_dt, which is NULL until they happen
 	assert meal["watermark_col"] == "upd_dt"
 	assert meal["fallback_watermark_col"] == "ins_dt"
+
+
+def test_iccoli_user_keyed_tables_are_filtered_to_the_loop_cohort():
+	"""
+	Community app users never leave the source system (owner decision 2026-08-06,
+	IMPLEMENTATION_PLAN.md N-02). Every user_no-keyed iccoli target must carry the
+	cohort row filter; the mapper itself is the one deliberate exception.
+	"""
+	from invites_loop_bi.config.iccoli_targets import LOOP_USERS_ONLY
+
+	targets = {t["table_name"]: t for t in get_extraction_targets("iccoli")}
+	user_keyed = {
+		"tb_user_login_log",
+		"tb_user_personal_info",
+		"tb_user_info",
+		"tb_activity_user_log",
+		"tb_action_user_log",
+		"tb_loop_push_history",
+		"tb_message_send_hist",
+		"tb_stats_avg_login_cnt_log",
+		"tb_user_activity_info",
+		"tb_user_attendance",
+		"tb_user_device_info",
+		"tb_stats_menu_visit_log",
+		"tb_point_item_srch_hist_log",
+		"tb_point_user_dtl",
+		"tb_point_user_adj_hist",
+	}
+	for table in user_keyed:
+		assert targets[table]["row_filter"] == LOOP_USERS_ONLY, table
+	assert targets["tb_ext_user_mapper"]["row_filter"] is None
+	# everything else defaults to unfiltered
+	for system in SOURCE_SYSTEMS:
+		if system == "iccoli":
+			continue
+		for target in get_extraction_targets(system):
+			assert target["row_filter"] is None, target
+
+
+def test_iccoli_identity_columns_never_leave_the_source():
+	"""N-01: direct identifiers are excluded at extraction, not just at transform."""
+	targets = {t["table_name"]: t for t in get_extraction_targets("iccoli")}
+	assert "tb_ext_user_preinfo" not in targets, "pre-registration identity must not be a target"
+	personal = set(targets["tb_user_personal_info"]["exclude_columns"])
+	assert {"ci", "di", "name", "phone", "email", "telecom"} <= personal
+	assert "birth" not in personal, "birth stays: it is the single source of birth_year (D-23)"
+	device = set(targets["tb_user_device_info"]["exclude_columns"])
+	assert {"device_token", "game_token", "apns_push_to_start_token", "apns_la_token"} <= device
 
 
 def test_the_lifelog_transaction_table_is_not_a_target():

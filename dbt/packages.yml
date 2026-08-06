@@ -1,0 +1,4 @@
+packages:
+  # unique_combination_of_columns backs every fact's grain test (D-04).
+  - package: dbt-labs/dbt_utils
+    version: 1.3.1

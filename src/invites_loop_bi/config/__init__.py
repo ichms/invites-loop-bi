@@ -19,10 +19,17 @@ every entry so downstream code (the extractors) can rely on a fixed shape:
 		"watermark_col":          "update_datetime" | None,
 		"fallback_watermark_col": "create_datetime" | None,
 		"exclude_columns":        ("meal_data",),   # never read, staged or stored
+		"row_filter":             "user_no IN (...)" | None,
 	}
 
 `exclude_columns` is optional and exists for payload columns that dwarf the rest
 of a table; see `disc_lifelog_user_meal` in `discovery_targets.py`.
+
+`row_filter` is an optional SQL predicate evaluated **in the source database**;
+rows that do not match never leave the source system. It exists for data
+minimisation (see `LOOP_USERS_ONLY` in `iccoli_targets.py`) and must be
+self-contained SQL: no `%s` placeholders, and any literal `%` doubled to `%%`,
+because the extraction query is bound with `mogrify()`.
 """
 
 import logging
@@ -31,7 +38,10 @@ from invites_loop_bi.config.discovery_targets import (
 	DISCOVERY_EXTRACTION_TARGETS,
 	DISCOVERY_FULL_REFRESH_TARGETS,
 )
-from invites_loop_bi.config.iccoli_targets import ICCOLI_EXTRACTION_TARGETS
+from invites_loop_bi.config.iccoli_targets import (
+	ICCOLI_EXTRACTION_TARGETS,
+	ICCOLI_FULL_REFRESH_TARGETS,
+)
 from invites_loop_bi.config.ichms_targets import (
 	ICHMS_EXTRACTION_TARGETS,
 	ICHMS_FULL_REFRESH_TARGETS,
@@ -63,7 +73,7 @@ EXTRACTION_TARGETS = {
 
 #: Truncate & reload targets, keyed by source system.
 FULL_REFRESH_TARGETS = {
-	"iccoli": [],
+	"iccoli": ICCOLI_FULL_REFRESH_TARGETS,
 	"ichms": ICHMS_FULL_REFRESH_TARGETS,
 	"sibc": SIBC_FULL_REFRESH_TARGETS,
 	"irs": IRS_FULL_REFRESH_TARGETS,
@@ -92,6 +102,7 @@ def _normalise(source_system: str, target: dict, load_type: str) -> dict:
 		"watermark_col": target.get("watermark_col"),
 		"fallback_watermark_col": target.get("fallback_watermark_col"),
 		"exclude_columns": tuple(target.get("exclude_columns") or ()),
+		"row_filter": target.get("row_filter") or None,
 	}
 
 

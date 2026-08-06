@@ -157,12 +157,6 @@ SIBC_EXTRACTION_TARGETS = [
 	},
 	{
 		"schema_name": "sibc",
-		"table_name": "user_signature_type",
-		"watermark_col": "created_at",
-		"fallback_watermark_col": None,
-	},
-	{
-		"schema_name": "sibc",
 		"table_name": "user_state_log",
 		"watermark_col": "created_at",
 		"fallback_watermark_col": None,
@@ -189,6 +183,16 @@ SIBC_EXTRACTION_TARGETS = [
 
 
 SIBC_FULL_REFRESH_TARGETS = [
+	{
+		# Its only timestamp-ish column, `created_at`, is a character(8) holding
+		# 'YYYYMMDD', so an incremental cutoff cannot compare against it
+		# ("operator does not exist: character > timestamp with time zone").
+		# The first run got away with it -- a first load runs no predicate at all --
+		# and every run after that failed. Small enough to truncate and reload.
+		"schema_name": "sibc",
+		"table_name": "user_signature_type",
+		"load_type": "full_refresh",
+	},
 	{
 		"schema_name": "sibc",
 		"table_name": "disease_factor",

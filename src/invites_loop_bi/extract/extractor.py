@@ -157,6 +157,7 @@ class BaseExtractor:
 		table_name: str = "",
 		*,
 		exclude_columns: tuple[str, ...] = (),
+		row_filter: str | None = None,
 		spool_max_bytes: int = DEFAULT_SPOOL_MAX_BYTES,
 		watermark_manager: WatermarkManager | None = None,
 	):
@@ -167,6 +168,16 @@ class BaseExtractor:
 		self.table_name = table_name
 		#: Columns never read from the source (huge payloads the warehouse does not need).
 		self.exclude_columns = tuple(exclude_columns)
+		#: Optional predicate evaluated in the source DB; non-matching rows never
+		#: leave the source system (data minimisation, see config docstring).
+		row_filter = (row_filter or "").strip() or None
+		if row_filter and "%" in row_filter.replace("%%", ""):
+			raise ValueError(
+				f"[{source_system}.{schema_name}.{table_name}] `row_filter` goes through "
+				f"mogrify(), so it cannot contain %s placeholders and literal % must be "
+				f"doubled to %%: {row_filter!r}"
+			)
+		self.row_filter = row_filter
 		self.spool_max_bytes = spool_max_bytes
 
 		# 2. Meta/DW DB connection for watermark management (Read-Write)
@@ -343,6 +354,7 @@ class IncrementalExtractor(BaseExtractor):
 		fallback_watermark_col: str | None = None,
 		*,
 		exclude_columns: tuple[str, ...] = (),
+		row_filter: str | None = None,
 		spool_max_bytes: int = DEFAULT_SPOOL_MAX_BYTES,
 		overlap: timedelta = timedelta(0),
 		watermark_manager: WatermarkManager | None = None,
@@ -354,6 +366,7 @@ class IncrementalExtractor(BaseExtractor):
 			schema_name,
 			table_name,
 			exclude_columns=exclude_columns,
+			row_filter=row_filter,
 			spool_max_bytes=spool_max_bytes,
 			watermark_manager=watermark_manager,
 		)
@@ -396,10 +409,15 @@ class IncrementalExtractor(BaseExtractor):
 			conditions.append(f"{self.watermark_expr} <= %s")
 			params.append(upper_bound)
 
+		# `predicate` carries the watermark window only: the loader replays it
+		# against *staging* to delete the window it is about to insert, where a
+		# row_filter's source-local references (e.g. a subquery on the mapper
+		# table) would not resolve. The row filter goes into the query alone.
 		predicate = "\n  AND ".join(conditions) if conditions else None
+		where = ([f"({self.row_filter})"] if self.row_filter else []) + conditions
 		query = f"SELECT {source_table.quoted_columns}\nFROM {self.qualified_name}"
-		if predicate:
-			query += f"\nWHERE {predicate}"
+		if where:
+			query += "\nWHERE " + "\n  AND ".join(where)
 
 		return ExtractionPlan(
 			source_system=self.source_system,
@@ -446,13 +464,16 @@ class FullRefreshExtractor(BaseExtractor):
 
 	def plan(self, upper_bound: datetime | None = None) -> ExtractionPlan:
 		source_table = self.describe()
+		query = f"SELECT {source_table.quoted_columns}\nFROM {self.qualified_name}"
+		if self.row_filter:
+			query += f"\nWHERE ({self.row_filter})"
 		return ExtractionPlan(
 			source_system=self.source_system,
 			schema_name=self.schema_name,
 			table_name=self.table_name,
 			load_type=self.load_type,
 			source_table=source_table,
-			query=f"SELECT {source_table.quoted_columns}\nFROM {self.qualified_name}",
+			query=query,
 			params=(),
 			predicate=None,
 			watermark_expr=None,
@@ -492,6 +513,7 @@ def build_extractor(
 		schema_name=target["schema_name"],
 		table_name=target["table_name"],
 		exclude_columns=tuple(target.get("exclude_columns") or ()),
+		row_filter=target.get("row_filter"),
 		spool_max_bytes=spool_max_bytes,
 		watermark_manager=watermark_manager,
 	)

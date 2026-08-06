@@ -117,6 +117,9 @@ def test_every_iccoli_target_is_introspectable():
 		for target in get_extraction_targets("iccoli"):
 			schema = describe_table(source, target["schema_name"], target["table_name"])
 			assert schema.columns, f"{schema.qualified_name} has no columns"
+			if target["load_type"] != LOAD_TYPE_INCREMENTAL:
+				# Full refresh truncates and reloads, so it needs no key to merge on.
+				continue
 			assert schema.primary_key, (
 				f"{schema.qualified_name} has no primary key -- an incremental target cannot be "
 				f"upserted without one"

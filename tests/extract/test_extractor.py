@@ -15,7 +15,7 @@ from tests.fakes import RecordingConnection, StubWatermarkManager, table_schema
 WATERMARK = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 
 
-def make_extractor(watermark=None, *, fallback="create_datetime", overlap=timedelta(0)):
+def make_extractor(watermark=None, *, fallback="create_datetime", overlap=timedelta(0), row_filter=None):
 	"""An extractor with its catalog lookup pre-filled, so it needs no database."""
 	extractor = IncrementalExtractor(
 		source_conn=None,
@@ -25,6 +25,7 @@ def make_extractor(watermark=None, *, fallback="create_datetime", overlap=timede
 		watermark_col="update_datetime",
 		fallback_watermark_col=fallback,
 		overlap=overlap,
+		row_filter=row_filter,
 		watermark_manager=StubWatermarkManager(watermark),
 	)
 	extractor._source_table = table_schema()
@@ -103,6 +104,73 @@ def test_excluded_columns_never_reach_the_query():
 	assert "payload" not in plan.source_table.column_names
 	# the loader builds its DDL from this same schema, so staging never gets it
 	assert '"status_cd"' in plan.query
+
+
+FILTER = "user_no IN (SELECT user_no FROM public.tb_ext_user_mapper WHERE ext_system_code = 'LOOP')"
+
+
+def test_row_filter_applies_on_the_first_run_too():
+	"""A filtered table is *never* read whole -- that is the point of the filter."""
+	plan = make_extractor(watermark=None, row_filter=FILTER).plan()
+	assert f"WHERE ({FILTER})" in plan.query
+	assert plan.params == ()
+	assert plan.is_full_load
+
+
+def test_row_filter_stays_out_of_the_replayed_predicate():
+	"""
+	The loader replays `plan.predicate` against *staging* to delete the window it
+	is about to insert (tables without a primary key). A row filter's source-local
+	references (the mapper subquery) would not resolve there, so the filter must
+	live in the query but never in the predicate.
+	"""
+	plan = make_extractor(watermark=WATERMARK, row_filter=FILTER).plan()
+	assert f"({FILTER})" in plan.query
+	assert 'COALESCE("update_datetime", "create_datetime") > %s' in plan.query
+	assert FILTER not in plan.predicate
+	assert plan.params == (WATERMARK,)
+
+
+def test_row_filter_applies_to_full_refresh():
+	extractor = FullRefreshExtractor(
+		source_conn=None,
+		source_system="iccoli",
+		schema_name="public",
+		table_name="tb_demo",
+		row_filter=FILTER,
+		watermark_manager=StubWatermarkManager(),
+	)
+	extractor._source_table = table_schema()
+	plan = extractor.plan()
+	assert f"WHERE ({FILTER})" in plan.query
+	assert plan.predicate is None
+
+
+def test_row_filter_with_placeholders_is_rejected():
+	"""The COPY query goes through mogrify(), so a stray % corrupts the binding."""
+	for bad in ("user_no = %s", "note LIKE 'a%'"):
+		try:
+			make_extractor(row_filter=bad)
+		except ValueError as exc:
+			assert "row_filter" in str(exc)
+		else:
+			raise AssertionError(f"row_filter {bad!r} should raise")
+	# a doubled %% is the documented escape and passes
+	make_extractor(row_filter="note LIKE 'a%%'")
+
+
+def test_builder_passes_the_row_filter_from_the_config():
+	extractor = build_extractor(
+		None,
+		target={
+			"schema_name": "public",
+			"table_name": "tb_user_info",
+			"watermark_col": "update_datetime",
+			"row_filter": FILTER,
+		},
+		watermark_manager=StubWatermarkManager(),
+	)
+	assert extractor.row_filter == FILTER
 
 
 def test_a_watermark_column_cannot_be_excluded():

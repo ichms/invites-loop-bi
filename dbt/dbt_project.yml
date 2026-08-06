@@ -1,0 +1,42 @@
+# Transform layer (the T of the ELT pipeline; see ../CLAUDE.md and
+# INVITES_LOOP_BI_DECISION_LOG.md D-01..D-10).
+#
+# Schema layout -- the naming needs one minute of attention, because two things
+# are both called "staging":
+#
+#   stg_iccoli, stg_sibc, ...  EL landing schemas, written by the Airflow DAGs.
+#                              dbt treats them as *sources* and never writes there.
+#   staging                    dbt staging models (views): dedupe, casts, key
+#                              translation, JSONB flattening via the allow-list.
+#   marts                      dims / facts / metric views. The only schema the
+#                              Metabase read-only role (bi_reader) can see.
+name: invites_loop_bi
+version: "0.1.0"
+profile: invites_loop_bi
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+
+target-path: target
+clean-targets: [target, dbt_packages]
+
+require-dbt-version: [">=1.10.0", "<2.0.0"]
+
+models:
+  invites_loop_bi:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      # Full rebuilds every run, deliberately: at the current volumes a rebuild
+      # is minutes, and `table` avoids the incremental-model concepts (late
+      # arriving data, lookback windows) entirely. Revisit only if `dbt build`
+      # ever exceeds ~15 minutes (IMPLEMENTATION_PLAN.md §3.1).
+      +schema: marts
+      +materialized: table
+
+seeds:
+  invites_loop_bi:
+    +schema: staging

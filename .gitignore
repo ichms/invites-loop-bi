@@ -24,3 +24,9 @@ setup_env.sh
 
 # Local documentation for context
 docs/
+data/
+
+# Notebook exports (rebuild with nbconvert)
+analysis/*.html
+analysis/*.pdf
+analysis/.ipynb_checkpoints/

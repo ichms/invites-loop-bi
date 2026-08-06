@@ -10,8 +10,10 @@ It runs as **Apache Airflow** DAGs (the `dags/` folder is the Airflow DAGs direc
 Python >= 3.13, managed with **uv**, `src/` layout.
 
 > **State of the repo:** extract and load are implemented, tested against the real databases,
-> and wired into DAGs. **`src/invites_loop_bi/transform/runner.py` is still empty** — that is the
-> next stage. `main.py` and `src/pipeline.py` are leftover empty stubs; the real entry point is
+> and wired into DAGs. The transform layer is **dbt** (`dbt/` at the repo root) — scaffolded and
+> connecting, **no models yet**; that is the next stage. Modelling decisions live in
+> `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` — read them before touching
+> `dbt/`. `main.py` and `src/pipeline.py` are leftover empty stubs; the real entry point is
 > `src/invites_loop_bi/pipeline.py`.
 
 ## Commands
@@ -28,6 +30,9 @@ uv run python tests/run_tests.py         # same suite without pytest; -k FILTER,
 uv run python -m invites_loop_bi.pipeline iccoli --dry-run          # print the SQL, touch nothing
 uv run python -m invites_loop_bi.pipeline iccoli --table tb_user_info
 uv run python -m invites_loop_bi.pipeline discovery --overlap-minutes 5
+
+uv run dbt build --project-dir dbt       # transform layer (models + tests); needs setup_env.sh
+uv run dbt debug --project-dir dbt       # check the dbt <-> warehouse connection
 ```
 
 No linter or CI is configured yet.
@@ -57,7 +62,12 @@ every row in a batch, silently corrupting `jsonb`).
     `ensure_table=False` for read-only callers such as a dry run).
 - **`load/`** — `staging_loader.py` creates the staging table from the source catalog, copies the
   CSV into a temp table, then merges. See **Load strategies** below.
-- **`transform/`** — `runner.py` runs SQL/transform steps over staging (**currently empty**).
+- **`transform/`** — a pointer only: the T is **dbt**, in `dbt/` at the repo root. dbt treats the
+  `stg_<system>` landing schemas as sources and writes to two schemas of its own: `staging`
+  (views: dedupe, casts, `user_no`→`user_id` translation, allow-listed JSONB flattening) and
+  `marts` (dims/facts/metric views — the only schema the BI read-only role sees). Credentials
+  come from `DBT_PG_*` env vars (`setup_env.sh`); marts materialise as `table`, deliberately —
+  no incremental models until a build exceeds ~15 minutes.
 - **`config/`** — `settings.py` holds connection ids and the staging layout; `__init__.py` is the
   target registry (`get_extraction_targets`); the `*_targets.py` files are the **declarative list
   of tables to extract** per source system.
@@ -103,14 +113,16 @@ Every staging table gets a `_loaded_at timestamptz` bookkeeping column. Columns 
 
 Each source system has a `config/<system>_targets.py` exporting a list of dicts. Adding a table to
 a pipeline means adding an entry here, not writing code. Systems: `iccoli`, `sibc`, `ichms`, `irs`,
-`discovery` — 108 tables in total.
+`discovery` — 123 tables in total.
 
 ```python
 {
     "schema_name": "public",
     "table_name": "tb_user_info",
-    "watermark_col": "update_datetime",         # column used for incremental cutoff
-    "fallback_watermark_col": "create_datetime" # used when watermark_col is null; None if none
+    "watermark_col": "update_datetime",          # column used for incremental cutoff
+    "fallback_watermark_col": "create_datetime", # used when watermark_col is null; None if none
+    "exclude_columns": ("ci", "di"),             # optional: never read, staged or stored
+    "row_filter": LOOP_USERS_ONLY,               # optional: SQL predicate run in the source DB
 }
 ```
 
@@ -118,6 +130,15 @@ The fallback exists because iccoli leaves `update_datetime` NULL until a row is 
 the predicate then runs on `COALESCE(update_datetime, create_datetime)`. Most systems set it to
 `None`. Alongside each list, `*_FULL_REFRESH_TARGETS` declares reference/meta tables with
 `"load_type": "full_refresh"`.
+
+`exclude_columns` exists for huge payloads *and* for data minimisation (identity columns).
+`row_filter` restricts every user-keyed iccoli table to Loop-cohort accounts (`LOOP_USERS_ONLY`,
+a subquery on `tb_ext_user_mapper`); community app users never leave the source system. It is
+self-contained SQL (no `%s`, literal `%` doubled — it goes through `mogrify()`) and it is kept
+out of `ExtractionPlan.predicate`, which the loader replays against *staging* for keyless-table
+deletes. Caveat: a user who enrols later gains rows only from the current watermark onwards —
+after an enrolment wave, delete the iccoli rows from `stg_meta.watermarks` to force a full,
+idempotent re-read (see the comment in `iccoli_targets.py`).
 
 `get_extraction_targets(system)` normalises entries to a fixed shape, validates them, and collapses
 duplicate `(schema, table)` declarations (first wins, with a warning).
@@ -151,6 +172,12 @@ joined without exposing the raw UUID.
 **It is not applied anywhere yet.** Because COPY never materialises values in Python, this cannot
 run in flight; it belongs in the transform layer (pgcrypto's `hmac()` in SQL, or a post-load
 update). Until then raw user UUIDs land in staging as-is.
+
+Since 2026-08-06, minimisation also happens at the **EL boundary** (IMPLEMENTATION_PLAN.md N-01/
+N-02): direct identifiers (CI/DI, names, phone, email, push/device tokens) are `exclude_columns`,
+`tb_ext_user_preinfo` is not a target, and user-keyed iccoli tables carry the cohort `row_filter`.
+`scripts/20260806_pii_cleanup.sql` retro-applied the policy to already-landed data. If a model
+needs a field that is excluded here, that is a policy conversation, not a config edit.
 
 ## Testing
 
