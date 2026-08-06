@@ -1,0 +1,103 @@
+# stg_sibc: EL landing schema for the SiBC coaching backend (see README.md for
+# the landing-vs-staging distinction).
+#
+# Freshness is declared only on tables that provably move every day the system
+# is alive — an incremental table with legitimately no new rows would false-
+# alarm, and a false alarm teaches people to ignore the tripwire:
+#   - user_signature_type is a full-refresh target: the loader rewrites it (and
+#     stamps _loaded_at) on every DAG run, so its staleness measures "the sibc
+#     DAG did not run", independent of source traffic.
+#   - user_intg_log / user_irs_log receive daily paired writes while the
+#     service is up.
+# `dbt source freshness` is not part of `dbt build`; it gets wired into the
+# transform DAG in Phase 3, alongside the real ELT schedules.
+
+version: 2
+
+sources:
+  - name: stg_sibc
+    description: SiBC coaching backend (database invites_loop, schema sibc), landed by the sibc ELT DAG.
+    schema: stg_sibc
+    loaded_at_field: _loaded_at
+    tables:
+      - name: user_intg_log
+        description: >
+          Daily integrated-analysis payload per user. Paired write with
+          user_irs_log. Up to 22 intra-day recomputations per (user_id, ymd);
+          staging keeps the last by created_at (Q-01).
+        freshness:
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 72, period: hour}
+        columns:
+          - name: intg_anlys
+            description: >
+              JSONB payload. Contains a top-level user_name key (measured
+              2026-08-06) — D-26 allow-list excludes it; only allow-listed keys
+              ever leave this column.
+            data_tests:
+              - jsonb_keys_in_allowlist:
+                  arguments:
+                    allowlist_table: user_intg_log
+      - name: user_irs_log
+        description: >
+          Daily IRS-analysis payload per user; paired write with user_intg_log,
+          same dedupe rule. The irs_data column is a legacy mixed-shape payload
+          (array in recent rows, object in 467 rows from 2025-12/2026-03) — it
+          is never selected by staging, and its USERNAME key was stripped in
+          place on 2026-08-06 (frozen rows, so the strip is durable); see
+          PII_INVENTORY.md.
+        freshness:
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 72, period: hour}
+        columns:
+          - name: irs_anlys
+            data_tests:
+              - jsonb_keys_in_allowlist:
+                  arguments:
+                    allowlist_table: user_irs_log
+      - name: user_master
+        description: >
+          The cohort population (N-02) — one row per enrolled user. user_nm,
+          birthday and birthtime were dropped and excluded at extraction on
+          2026-08-06 (PII_INVENTORY.md R-4); the static age/bio_age and
+          weight/height/born_in still land but are never selected by staging
+          (D-22/D-23/D-24).
+      - name: user_signature_type
+        description: Full-refresh target — freshness on it measures whether the sibc DAG ran at all.
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+      - name: api_logs
+      - name: chat_msgs
+        description: Free-text health chat. Sensitive category — must never reach marts (§2 of the plan).
+      - name: chat_thread_evts
+      - name: chat_threads
+      - name: chat_threads_batch_state
+      - name: chat_threads_turns
+      - name: daily_routine_activities
+      - name: daily_routines
+      - name: disease_factor
+      - name: disease_info
+      - name: genetic_trait_info
+      - name: health_assistant_msg
+      - name: insight_texts
+      - name: insight_texts_history
+      - name: lifestyle_mapping
+      - name: llm_usage
+      - name: onboarding_qstn_master
+      - name: send_messages
+      - name: signature_type_mapping
+      - name: target_calorie
+      - name: user_bhv_log
+      - name: user_checkup_log
+      - name: user_diet_analysis
+      - name: user_dtc_log
+        description: DTC genetic-test results. Sensitive category — must never reach marts raw (D-16 rationale).
+      - name: user_event_log
+      - name: user_guardrail
+      - name: user_profiles_log
+      - name: user_routine_fdbk
+      - name: user_state_log
+      - name: user_unavl_periods
+      - name: weekly_routine_goal
+      - name: weekly_routine_plan

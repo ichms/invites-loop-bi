@@ -1,0 +1,9 @@
+source_table,payload_column,jsonb_key,extract,note
+user_intg_log,intg_anlys,risk_overview,true,Per-disease risk array; exploded into fct_user_disease_day
+user_intg_log,intg_anlys,user_signature_type,true,Flattened to signature_* columns in staging
+user_intg_log,intg_anlys,current_status,false,Korean narrative + nested clinical text; the IRS+/LRS/MRS/PRS scalars live relationally in stg_irs.user_irs_hist - not here
+user_intg_log,intg_anlys,prioritized_actions,false,Coaching action list; not modelled yet
+user_intg_log,intg_anlys,disclaimers,false,Legal boilerplate
+user_intg_log,intg_anlys,error,false,LLM serialisation-failure marker; rows dropped in staging (see assert_intg_error_rows_bounded)
+user_intg_log,intg_anlys,user_name,false,Identity - never extract (D-22/D-26)
+user_irs_log,irs_anlys,risk_overview,true,Per-disease risk array (irs_rank; no scores)

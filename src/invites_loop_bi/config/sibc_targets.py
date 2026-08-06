@@ -84,10 +84,13 @@ SIBC_EXTRACTION_TARGETS = [
 		"fallback_watermark_col": None,
 	},
 	{
+		# user_name excluded: direct identifier with no analytical use
+		# (owner decision 2026-08-06, PII_INVENTORY.md R-4).
 		"schema_name": "sibc",
 		"table_name": "target_calorie",
 		"watermark_col": "updated_at",
 		"fallback_watermark_col": None,
+		"exclude_columns": ("user_name",),
 	},
 	{
 		"schema_name": "sibc",
@@ -138,16 +141,26 @@ SIBC_EXTRACTION_TARGETS = [
 		"fallback_watermark_col": None,
 	},
 	{
+		# Name and full DOB (+birth time) stay in the source (owner decision
+		# 2026-08-06, PII_INVENTORY.md R-4). birth_year's single source is
+		# iccoli tb_user_personal_info.birth (D-23); the static age/bio_age
+		# columns remain but are never selected by dbt staging (D-24/D-25).
 		"schema_name": "sibc",
 		"table_name": "user_master",
 		"watermark_col": "updated_at",
 		"fallback_watermark_col": None,
+		"exclude_columns": ("user_nm", "birthday", "birthtime"),
 	},
 	{
+		# Frozen legacy table (last write 2026-03-06). The relational user_name
+		# column is excluded; name keys embedded in its jsonb payloads were
+		# stripped once by scripts/20260806_pii_cleanup_phase1.sql (durable,
+		# since nothing writes here any more).
 		"schema_name": "sibc",
 		"table_name": "user_profiles_log",
 		"watermark_col": "updated_at",
 		"fallback_watermark_col": None,
+		"exclude_columns": ("user_name",),
 	},
 	{
 		"schema_name": "sibc",

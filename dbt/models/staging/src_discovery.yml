@@ -1,0 +1,55 @@
+# stg_discovery: EL landing schema for the Discovery health-data platform
+# (database invites_loop, schema discovery). Holds lifelog measurements plus
+# sensitive categories (genomic, medical, prescription) that must never reach
+# marts raw — see PII_INVENTORY.md. No staging model reads from here yet
+# (fct_measurement arrives in Phase 3).
+
+version: 2
+
+sources:
+  - name: stg_discovery
+    description: Discovery health-data platform, landed by the discovery ELT DAG.
+    schema: stg_discovery
+    loaded_at_field: _loaded_at
+    tables:
+      - name: disc_user_disease_answer
+        description: >
+          Full-refresh target — freshness on it measures whether the discovery
+          DAG ran at all. (disc_globalization_code, the other obvious candidate,
+          is empty at the source, so its max(_loaded_at) is always NULL and
+          freshness on it always errors.)
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+      - name: disc_globalization_code
+        description: Empty at the source (0 rows, checked 2026-08-06).
+      - name: disc_consultation_user_info
+      - name: disc_disease_detail_info
+      - name: disc_dtc_user_info
+      - name: disc_examination_user_info
+      - name: disc_genomic_user_info
+      - name: disc_health_info_meta
+      - name: disc_health_info_meta_detail
+      - name: disc_health_user_info
+      - name: disc_irs_user_info
+      - name: disc_lifelog_user_activity
+      - name: disc_lifelog_user_bloodglucose
+      - name: disc_lifelog_user_bloodpressure
+      - name: disc_lifelog_user_body_info
+      - name: disc_lifelog_user_bodyfat
+      - name: disc_lifelog_user_food
+      - name: disc_lifelog_user_grip_strength
+      - name: disc_lifelog_user_heartrate
+      - name: disc_lifelog_user_meal
+      - name: disc_lifelog_user_oxygen_saturation
+      - name: disc_lifelog_user_sleep
+      - name: disc_lifelog_user_sleep_detail
+      - name: disc_lifestyle_survey_question_detail
+      - name: disc_lifestyle_survey_question_option
+      - name: disc_lifestyle_user_survey_answer
+      - name: disc_medical_user_info
+      - name: disc_prescription_medicine_user_info
+      - name: disc_race_info_meta_info
+      - name: disc_survey_discovery_version
+      - name: disc_user_disease_history
+      - name: disc_user_race_info_history

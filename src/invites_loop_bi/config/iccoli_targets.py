@@ -29,11 +29,15 @@ ICCOLI_EXTRACTION_TARGETS = [
 		"exclude_columns": ("ci", "di", "name", "phone", "email", "telecom"),
 	},
 	{
+		# Login id, nicknames and the free-text introduce are direct identifiers
+		# with no analytical use (owner decision 2026-08-06, PII_INVENTORY.md
+		# R-1). invite_code stays: referral linkage feeds the invite missions.
 		"schema_name": "public",
 		"table_name": "tb_user_info",
 		"watermark_col": "update_datetime",
 		"fallback_watermark_col": "create_datetime",
 		"row_filter": LOOP_USERS_ONLY,
+		"exclude_columns": ("id", "nickname", "sub_nickname", "introduce"),
 	},
 	{
 		"schema_name": "public",
@@ -69,6 +73,9 @@ ICCOLI_EXTRACTION_TARGETS = [
 		"watermark_col": "read_datetime",
 		"fallback_watermark_col": "create_datetime",
 		"row_filter": LOOP_USERS_ONLY,
+		# Same token class N-01 pruned from tb_user_device_info; this table was
+		# missed in Phase 0 (found by the Q-11 inventory, 236k landed rows purged).
+		"exclude_columns": ("push_token",),
 	},
 	{
 		"schema_name": "public",
@@ -173,10 +180,14 @@ ICCOLI_EXTRACTION_TARGETS = [
 		"fallback_watermark_col": None,
 	},
 	{
+		# call_ctn / rcv_ctn are 11-digit phone numbers in the coupon-SMS trail
+		# (owner decision 2026-08-06, PII_INVENTORY.md R-3). sender / receiver /
+		# send_msg stay: measured single-valued service constants, not personal.
 		"schema_name": "public",
 		"table_name": "tb_point_item_cpn_issue_intr_hist",
 		"watermark_col": "create_datetime",
 		"fallback_watermark_col": None,
+		"exclude_columns": ("call_ctn", "rcv_ctn"),
 	},
 	{
 		"schema_name": "public",
@@ -189,6 +200,7 @@ ICCOLI_EXTRACTION_TARGETS = [
 		"table_name": "tb_point_item_cpn_state_intr_hist",
 		"watermark_col": "create_datetime",
 		"fallback_watermark_col": None,
+		"exclude_columns": ("call_ctn", "rcv_ctn"),
 	},
 	{
 		"schema_name": "public",

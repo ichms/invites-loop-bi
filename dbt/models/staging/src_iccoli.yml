@@ -1,0 +1,71 @@
+# stg_iccoli: EL landing schema for the iccoli app-identity system (database
+# iccoli, schema public). Every user-keyed table is already cohort-filtered at
+# extraction (N-02 row_filter) and identity columns are pruned at extraction
+# (N-01 exclude_columns) — what lands here is the minimised copy.
+#
+# Freshness opt-ins (see src_sibc.yml for the reasoning):
+#   - tb_ext_user_mapper is full-refresh: staleness measures "the iccoli DAG
+#     did not run".
+#   - tb_user_login_log moves whenever any cohort user opens the app.
+
+version: 2
+
+sources:
+  - name: stg_iccoli
+    description: iccoli app / identity system, landed by the iccoli ELT DAG.
+    schema: stg_iccoli
+    loaded_at_field: _loaded_at
+    tables:
+      - name: tb_ext_user_mapper
+        description: >
+          user_no ↔ user_id translation table (Q-10). Full refresh, deliberately —
+          upstream deletes must propagate or cohort membership silently rots.
+          Strict 1:1 today; ext_system_code must be filtered to 'LOOP' in every
+          join (the column exists to fan out to other systems later).
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+      - name: tb_user_login_log
+        freshness:
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 72, period: hour}
+      - name: tb_user_personal_info
+        description: >
+          Identity table, pruned at extraction to birth/gender/nation (N-01).
+          birth ('YYMMDD') is the single source of birth_year (D-23); staging
+          reduces it and never exposes it raw.
+      - name: tb_user_info
+        description: >
+          Login id, nickname, sub_nickname and introduce were dropped and
+          excluded at extraction on 2026-08-06 (PII_INVENTORY.md R-1);
+          invite_code stays — referral linkage feeds the invite missions.
+      - name: tb_action_info
+      - name: tb_action_mapper
+      - name: tb_action_user_log
+      - name: tb_activity_user_log
+      - name: tb_loop_push_history
+      - name: tb_menu_app
+      - name: tb_message_send_hist
+      - name: tb_point_item
+      - name: tb_point_item_cpn
+      - name: tb_point_item_cpn_cncl_intr_hist
+      - name: tb_point_item_cpn_issue_intr_hist
+      - name: tb_point_item_cpn_state_intr_hist
+      - name: tb_point_item_ctg
+      - name: tb_point_item_hist
+      - name: tb_point_item_intr_hist
+      - name: tb_point_item_intr_hist_dtl
+      - name: tb_point_item_srch_hist_log
+      - name: tb_point_mission
+      - name: tb_point_mission_category
+      - name: tb_point_mission_dtl
+      - name: tb_point_mission_tag
+      - name: tb_point_mission_tag_sub
+      - name: tb_point_user_adj_hist
+      - name: tb_point_user_dtl
+      - name: tb_stats_active_user_cnt
+      - name: tb_stats_avg_login_cnt_log
+      - name: tb_stats_menu_visit_log
+      - name: tb_user_activity_info
+      - name: tb_user_attendance
+      - name: tb_user_device_info

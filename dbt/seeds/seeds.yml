@@ -1,0 +1,23 @@
+version: 2
+
+seeds:
+  - name: jsonb_allowlist
+    description: >
+      D-26/D-27: the explicit allow-list of top-level JSONB keys in the sibc log
+      payloads. This file is the contract: a key must be listed here to be KNOWN,
+      and must have extract=true to be selected by a staging model. The payload is
+      a moving target by design (모델/룰 변경으로 키 확장 가능) — when the drift
+      test (jsonb_keys_in_allowlist) fails naming a new key, classify it, add a
+      row here (extract=false unless a model needs it and it is identity-free),
+      and re-run. Never add an identity key with extract=true.
+    config:
+      column_types:
+        source_table: text
+        payload_column: text
+        jsonb_key: text
+        extract: boolean
+        note: text
+    columns:
+      - name: jsonb_key
+        data_tests:
+          - not_null

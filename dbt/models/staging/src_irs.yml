@@ -1,0 +1,30 @@
+# stg_irs: EL landing schema for the IRS scoring engine (database invites_loop,
+# schema irs). user_irs_hist is where the scalar IRS+/LRS/MRS/PRS scores
+# actually live, relationally — not inside the sibc JSONB payloads (measured
+# 2026-08-06; the plan's Phase 1 note assumed otherwise).
+
+version: 2
+
+sources:
+  - name: stg_irs
+    description: IRS scoring engine, landed by the irs ELT DAG.
+    schema: stg_irs
+    loaded_at_field: _loaded_at
+    tables:
+      - name: user_irs_hist
+        description: >
+          Score history at (user_id, create_date, disease_id) — grain verified
+          exact on 2026-08-06 (180,969 rows, 44 disease ids). Score columns are
+          null on ~19–23% of rows (not every score is computed for every
+          disease/day); the staging null-rate thresholds encode that baseline.
+        freshness:
+          warn_after: {count: 36, period: hour}
+          error_after: {count: 72, period: hour}
+      - name: disease_info
+        description: Full-refresh target — freshness on it measures whether the irs DAG ran at all.
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+      - name: irs_data
+      - name: irs_data_log
+      - name: job_input_data

@@ -170,29 +170,58 @@ then remaining facts; **never** the grain tests).
 - [x] `generate_schema_name` macro pins the layout: sources = `stg_<system>`, dbt staging
       views = `staging`, marts = `marts` (READMEs in `dbt/models/*` explain the naming).
 
-### Phase 1 — dbt staging layer (Days 1–2)
+### Phase 1 — dbt staging layer (Days 1–2) — **DONE 2026-08-06** (`dbt build`: 58/58 green; `dbt source freshness`: 9/9 pass)
 
-- [ ] `sources.yml` over the `stg_<system>` landing schemas, with `loaded_at_field: _loaded_at`
-      and source freshness thresholds — freshness is the loud-failure tripwire for a stalled
-      ELT DAG, which the current stack lacks entirely.
-- [ ] `stg_sibc__user_intg_log`, `stg_sibc__user_irs_log`: Q-01 dedupe (last `created_at`
-      wins), `ymd` cast to `date` + cast-integrity test, JSONB flattening via **allow-list
-      seed** (D-26): seed CSV `jsonb_allowlist.csv` (versioned file, per the handover
-      checklist) — measured top-level keys today: `risk_overview`, `current_status`,
-      `user_signature_type`, `prioritized_actions`, `disclaimers`; **`user_name` excluded**.
-      Key-level flattening spec (where exactly IRS+/LRS/MRS/PRS scalars live inside
-      `current_status`/`risk_overview`) is written here by inspecting payloads.
-- [ ] **Drift test (D-27):** custom generic test comparing `jsonb_object_keys()` of each
-      guarded payload against the seed; unknown key → build failure naming the key.
-- [ ] `stg_iccoli__*`: `user_no → user_id` translation via the mapper, `ext_system_code =
-      'LOOP'` filtered **inside the CTE**, `not_null` on the resulting key, singular test
-      pinning the known orphan counts (§1). No model downstream of staging ever sees `user_no`.
-- [ ] D-22/D-23 enforced in staging models: no username columns selected anywhere; `birth`/
-      `birthday` reduced to `birth_year int` and the raw column never selected.
-- [ ] **Q-11 inventory** (`analysis/pii_inventory.md`): every column in all five landing
-      schemas classified identifier / quasi-identifier / analytical. Seeded by §2.
-- [ ] Tests throughout: `not_null` + null-rate threshold test (D-05) on every JSONB-extracted
-      field.
+- [x] Source declarations over all five landing schemas (123 tables), one file per system
+      (`dbt/models/staging/src_*.yml`), `loaded_at_field: _loaded_at`. Freshness is **opt-in
+      per table**, not blanket — a quiet incremental table would false-alarm and teach people
+      to ignore the tripwire. Two signals per system: a *full-refresh* table (loader rewrites
+      it every DAG run, so staleness = "the DAG did not run") and a daily heartbeat event
+      table where one exists. Found in passing: `disc_globalization_code` is empty at the
+      source (0 rows), so its `max(_loaded_at)` is always NULL — the discovery tripwire is
+      `disc_user_disease_answer` instead.
+- [x] `stg_sibc__user_intg_log`, `stg_sibc__user_irs_log`: Q-01 dedupe, `ymd` cast (+
+      not_null as the cast-integrity test; `to_date` raises on garbage, loudly), flattening
+      via `dbt/seeds/jsonb_allowlist.csv`. The seed distinguishes **known** keys from
+      **extracted** keys (`extract` flag): a key must be listed to pass the drift test and
+      flagged to leave the payload — `user_name` is known-and-never-extracted. Measurement
+      added one key the plan's list missed: **`error`** (1 row, an LLM serialisation failure
+      `{"error": "..."}` with no structured fields; staging filters such rows,
+      `assert_intg_error_rows_bounded` warns if the count grows).
+      **Flattening spec, corrected by measurement:** the scalar IRS+/LRS/MRS/PRS scores are
+      **not in the sibc payloads at all** — they live relationally in
+      `stg_irs.user_irs_hist` (`irs/irsp/lrs/mrs/prs_score` at (user_id, create_date,
+      disease_id), grain verified exact, 180,969 rows, **44** disease ids — note: not 35;
+      check against `IRSdiseasecatalog.csv` before seeding `dim_disease` in Phase 2). A new
+      `stg_irs__user_irs_hist` model stages them. The payloads carry per-disease `irs_rank`
+      (`risk_overview[]`, passed through as jsonb for the Phase 2 explosion) and
+      `user_signature_type` (flattened to `signature_*` columns). `user_irs_log.irs_data` is
+      never selected: legacy mixed-shape, and its 467 object-form rows carry `USERNAME` (see
+      PII_INVENTORY.md).
+- [x] **Drift test (D-27)** (`tests/generic/test_jsonb_keys_in_allowlist.sql`) attached to
+      both payload columns at the *source* level — drift is caught before staging runs.
+- [x] `stg_iccoli__*` (mapper, user_personal_info, user_info, action_info, action_user_log,
+      user_login_log): translation CTE filtered `ext_system_code = 'LOOP'` inside, `not_null`
+      on the translated key, no `user_no` downstream of staging. Orphan pins:
+      `assert_unmapped_cohort_users_pinned` — **the count moved since §1 was written: 2, not
+      1**. New unmapped-but-active cohort member `fbe82bc5…` (joined 2026-05-01, same day as
+      `2725eece…`); same owner follow-up. `assert_mapper_only_users_counted` warn-pins the
+      39 mapper-only entries.
+- [x] D-22/D-23 enforced: no name/nickname column selected anywhere; `birth` ('YYMMDD',
+      two-digit year → century pivot on current year) reduced to `birth_year int`, raw value
+      never selected; `user_master` staging selects only `user_id, sex, joined_dt, timezone`
+      + timestamps.
+- [x] **Q-11 inventory** delivered as **`PII_INVENTORY.md` (repo root)** — `analysis/` is
+      gitignored as local scratch and this is a versioned handover deliverable, hence the
+      placement change. All 123 tables / 1,246 columns classified. Findings exceed §2:
+      `auth_user_account.login_pw` (16k bcrypt hashes), `tb_loop_push_history.push_token`
+      (236k rows, N-01 missed it), phone numbers in the coupon SMS trail, relational
+      `user_name` columns in `target_calorie`/`user_profiles_log`, `USERNAME` inside legacy
+      `irs_data` payloads. Recommendations R-1..R-8 are owner decisions (N-01 policy), not
+      config edits made here.
+- [x] Tests: 47 data tests green — grain tests on every staging model with a declarable
+      grain, D-05 not_null + `null_rate_below` pairs on every JSONB-extracted field
+      (thresholds pinned to measured baselines, e.g. scores ~19–23% null → 0.35 ceiling).
 
 ### Phase 2 — core marts (Days 3–5) — *load-bearing; if only this ships, handover still works*
 
@@ -258,6 +287,8 @@ then remaining facts; **never** the grain tests).
 | Q-09 grmc co-tenancy | Must be answered before `01_readonly_role.sql` (Phase 4 gate) |
 | Q-12 age exposure | Plan implements the log's recommendation (band in marts, raw age view-layer only) |
 | Q-13 production hosting | Untouched; everything here is hosting-independent per D-28 |
-| N-01 PII at EL boundary | **Decided (a) and implemented 2026-08-06** — §3.4 and Phase 0 |
+| N-01 PII at EL boundary | **Decided (a) and implemented 2026-08-06** — §3.4 and Phase 0. Phase 1's full inventory found gaps in the pruning: see `PII_INVENTORY.md` R-1..R-8, all owner decisions |
 | N-02 cohort scoping | **Decided (row_filter at EL) and implemented 2026-08-06** — §3.4 |
-| **NEW: unmapped active cohort user** | uuid `2725eece…` — real member, no iccoli mapping. Owner follow-up required (Phase 0 notes) |
+| **NEW: unmapped active cohort users** | Now **two**: `2725eece…` (Phase 0) and `fbe82bc5…` (Phase 1) — both real members, both joined 2026-05-01, no iccoli mapping. Owner follow-up required; `assert_unmapped_cohort_users_pinned` fails loudly if the set changes |
+| **NEW: dim_disease row count** | **Reconciled 2026-08-06:** all 35 catalog diseases are scored, plus exactly 9 scored-but-not-displayed extras (macular degeneration, brain aneurysm, cardiac arrhythmia, endometrial cancer, endometriosis, hepatocellular carcinoma, lung cancer, Parkinson's, PCOS). Owner: focus stays on the 35 — `dim_disease` seeds from the catalog; fact rows for the 9 simply don't join to the dim and are not user-facing |
+| **NEW: `login_pw` in warehouse** | **Resolved 2026-08-06:** owner decided to discard the direct-identifier classes; `scripts/20260806_pii_cleanup_phase1.sql` (executed) dropped 26 columns across ichms/sibc/iccoli and stripped name keys from frozen legacy payloads; matching `exclude_columns` added to all three target configs. Remaining open items in PII_INVENTORY.md §Resolution status (ichms table-scope question, R-7, R-8, upstream `user_name` key) |

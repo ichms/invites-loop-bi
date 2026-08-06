@@ -10,10 +10,12 @@ It runs as **Apache Airflow** DAGs (the `dags/` folder is the Airflow DAGs direc
 Python >= 3.13, managed with **uv**, `src/` layout.
 
 > **State of the repo:** extract and load are implemented, tested against the real databases,
-> and wired into DAGs. The transform layer is **dbt** (`dbt/` at the repo root) — scaffolded and
-> connecting, **no models yet**; that is the next stage. Modelling decisions live in
-> `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` — read them before touching
-> `dbt/`. `main.py` and `src/pipeline.py` are leftover empty stubs; the real entry point is
+> and wired into DAGs. The transform layer is **dbt** (`dbt/` at the repo root) — the **staging
+> layer is built** (sources over all five landing schemas, staging views, allow-list seed,
+> drift/grain/null-rate tests); **marts are the next stage** (Phase 2). Modelling decisions
+> live in `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md`, and the Q-11 column
+> classification in `PII_INVENTORY.md` — read them before touching `dbt/`. `main.py` and
+> `src/pipeline.py` are leftover empty stubs; the real entry point is
 > `src/invites_loop_bi/pipeline.py`.
 
 ## Commands

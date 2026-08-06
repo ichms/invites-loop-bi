@@ -148,7 +148,10 @@ def reset_staging(dw, source_system: str, schema_name: str, table_name: str) -> 
 	with dw.cursor() as cursor:
 		cursor.execute("SELECT to_regclass(%s)", (staging,))
 		if cursor.fetchone()[0]:
-			cursor.execute(f"DROP TABLE {staging}")
+			# CASCADE: since Phase 1 the dbt staging views read these landing
+			# tables, so a plain DROP refuses. The views come back with the
+			# rollback like everything else in this transaction.
+			cursor.execute(f"DROP TABLE {staging} CASCADE")
 		cursor.execute("SELECT to_regclass('stg_meta.watermarks')")
 		if cursor.fetchone()[0]:
 			cursor.execute(

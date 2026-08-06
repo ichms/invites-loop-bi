@@ -1,0 +1,164 @@
+# Tests for the staging layer. Two families recur:
+#   - grain tests (D-04): unique_combination_of_columns on the declared grain,
+#     never cut;
+#   - D-05 pairs on JSONB-extracted fields: not_null where the field is
+#     structurally required, null_rate_below where a measured baseline of nulls
+#     is legitimate — the threshold catches the key-rename-flatlines-the-
+#     dashboard failure mode, which not_null alone cannot on a nullable field.
+
+version: 2
+
+models:
+  - name: stg_sibc__user_intg_log
+    description: >
+      Integrated-analysis log, deduped to (user_id, ymd_date) by last
+      created_at (Q-01). LLM error rows filtered out. JSONB flattened through
+      the allow-list seed only.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, ymd_date]
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+      - name: ymd_date
+        description: Cast from varchar 'YYYYMMDD'; not_null is the cast-integrity test (source ymd is never null).
+        data_tests: [not_null]
+      - name: risk_overview
+        data_tests: [not_null]
+      - name: signature_description
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.10}
+      - name: signature_disease_type_code
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.10}
+      - name: signature_lifestyle_type_code
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.10}
+      - name: signature_potential_type_code
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.10}
+      - name: signature_segment_type_code
+        description: Absent on ~5% of payloads (measured 2026-08-06); threshold leaves room for noise, not for a rename.
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.25}
+
+  - name: stg_sibc__user_irs_log
+    description: IRS-analysis log, same dedupe rule as the intg log (paired writes).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, ymd_date]
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+      - name: ymd_date
+        data_tests: [not_null]
+      - name: risk_overview
+        data_tests: [not_null]
+
+  - name: stg_sibc__user_master
+    description: Cohort population (N-02), one row per enrolled user. Identity and static-age columns are never selected.
+    columns:
+      - name: user_id
+        data_tests: [not_null, unique]
+      - name: sex
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['M', 'F']
+              config: {severity: warn}
+      - name: joined_dt
+        data_tests: [not_null]
+
+  - name: stg_irs__user_irs_hist
+    description: Scalar IRS+/LRS/MRS/PRS scores, relational — the source of truth the sibc payloads only rank.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, score_date, disease_id]
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+      - name: score_date
+        data_tests: [not_null]
+      - name: disease_id
+        data_tests: [not_null]
+      # Measured null rates 2026-08-06: irs 18.7%, irsp/lrs 18.4%, mrs 19.0%,
+      # prs 22.8%. A breach of 0.35 means the extraction/loading path broke,
+      # not that scoring got a little sparser.
+      - name: irs_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: irsp_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: lrs_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: mrs_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: prs_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+
+  - name: stg_iccoli__tb_ext_user_mapper
+    description: Loop-cohort side of the Q-10 mapper; user_no never leaves staging.
+    columns:
+      - name: user_id
+        data_tests: [not_null, unique]
+
+  - name: stg_iccoli__tb_user_personal_info
+    description: birth reduced to birth_year (D-23); raw birth never selected.
+    columns:
+      - name: user_id
+        description: Translated key; a null here means an extracted row has no LOOP mapping (join-hygiene tripwire).
+        data_tests: [not_null]
+      - name: birth_year
+        description: 2 of 441 source rows have no birth value (measured 2026-08-06).
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.05}
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1900
+                max_value: 2030
+              config:
+                where: "birth_year is not null"
+
+  - name: stg_iccoli__tb_user_info
+    columns:
+      - name: user_id
+        data_tests: [not_null, unique]
+
+  - name: stg_iccoli__tb_action_info
+    columns:
+      - name: action_no
+        data_tests: [not_null, unique]
+
+  - name: stg_iccoli__tb_action_user_log
+    columns:
+      - name: action_log_no
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests: [not_null]
+      - name: action_no
+        data_tests: [not_null]
+
+  - name: stg_iccoli__tb_user_login_log
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+      - name: login_datetime
+        data_tests: [not_null]
