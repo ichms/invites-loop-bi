@@ -57,7 +57,9 @@ Whoever takes it on permanently owns:
 4. `PII_INVENTORY.md` — what data exists, classified, plus the open items.
 5. `dbt/docs/dbt_docs.html` — open in a browser; model and column documentation
    with the full lineage graph.
-6. `../invites-loop-bi-deploy/RUNBOOK.ko.md` and `METRICS.ko.md`.
+6. `HOWTO.md` — adding a dim/fact to the marts, joining tables in Metabase, and
+   restricting what an MCP / AI client can do.
+7. `../invites-loop-bi-deploy/RUNBOOK.ko.md` and `METRICS.ko.md`.
 
 ## Things that will bite
 

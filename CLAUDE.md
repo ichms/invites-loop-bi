@@ -23,7 +23,8 @@ Python >= 3.13, managed with **uv**, `src/` layout.
 > `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` (which records where
 > measurement overrode the log — §3), and the Q-11 column classification in `PII_INVENTORY.md`
 > — read them before touching `dbt/`. Generated dbt documentation is committed at
-> `dbt/docs/dbt_docs.html`. `main.py` and `src/pipeline.py` are leftover empty stubs; the real
+> `dbt/docs/dbt_docs.html`, and `HOWTO.md` covers extending the marts, Metabase
+> joins, and MCP restriction. `main.py` and `src/pipeline.py` are leftover empty stubs; the real
 > entry point is `src/invites_loop_bi/pipeline.py`.
 
 ## Commands
