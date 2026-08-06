@@ -312,20 +312,40 @@ then remaining facts; **never** the grain tests).
       root `.gitignore` had an unanchored `docs/` rule that also swallowed `dbt/docs/`; it is
       now root-anchored (`/docs/`).
 
-### Phase 4 — Metabase, locally (Days 8–10)
+### Phase 4 — Metabase, locally (Days 8–10) — **infrastructure DONE 2026-08-06; two items blocked on an admin credential**
 
-- [ ] `invites-loop-bi-deploy` repo, exactly the log's layout (D-20/D-28). Local note: this
-      machine runs Docker via **Colima**, not Docker Desktop — the compose file needs nothing
-      special, but the runbook's local-dev section should say `colima start` first.
-- [ ] Pinned Metabase tag (D-14), postgres app-DB container (D-13), env vars per D-18
-      (`MB_REPORT_TIMEZONE=Asia/Seoul` — KST correctness, not cosmetics).
-- [ ] `01_readonly_role.sql`: `bi_reader`, `GRANT USAGE ON SCHEMA marts` + `SELECT` on its
-      tables only, `ALTER DEFAULT PRIVILEGES` so new marts models are covered. Blocked-by:
-      Q-09 (does `grmc` share the instance) — ask now, decide before writing the file.
-- [ ] Permission groups: Planning Team = query builder on marts, **native SQL off** (D-17).
-- [ ] `backup.sh` / `restore.sh`; **restore actually performed** against a scratch container
-      (D-15) and the run recorded in the runbook.
-- [ ] Three dashboards that demonstrate the pattern (per the log's §4.5 scope rejection).
+- [x] `invites-loop-bi-deploy` repo created at `../invites-loop-bi-deploy` (sibling), the
+      log's layout exactly. Colima notes are in its README first section, including the
+      `--cpu 4 --memory 8` requirement (the 2 GB default OOM-kills Metabase with exit 137,
+      which reads like an app bug). This machine has the standalone `docker-compose` binary,
+      not the `docker compose` plugin; the scripts detect either.
+- [x] Metabase pinned to **`v0.58.24`** — the LTS line, not the newest release: security
+      patches without feature churn is the right trade for an instance whose owner is
+      leaving. Verified multi-arch (the VM is aarch64). `postgres:17-alpine` app DB on a
+      **named volume** (Colima host mounts are not writable by the postgres user), matching
+      the warehouse's major version so there is one Postgres idiom to learn. D-18 env vars
+      set. Stack is **up and healthy** (~30s to healthy).
+- [x] `01_readonly_role.sql` + `02_grants.sql` written. **Q-09 resolved 2026-08-06: `grmc`
+      was deleted and does not share this warehouse**, so no cross-tenant carve-out. The
+      files split on a privilege line: role creation needs `CREATEROLE`, grants need only the
+      marts owner. Beyond D-16's read-only requirement the role also gets
+      `default_transaction_read_only`, a 120s `statement_timeout`, and an idle-transaction
+      timeout; `02_grants.sql` ends with a block that **raises** if `bi_reader` can reach any
+      schema but `marts`.
+- [ ] **BLOCKED — role not yet created.** No credential available on this machine has
+      `CREATEROLE`: `analytics_user` (all five `pg_service` entries resolve to it,
+      `invites_dev`, or `iccoli`) is not a member of `azure_pg_admin` or `postgres`. Needs an
+      Azure admin account to run `01_readonly_role.sql` once; `02_grants.sql` then runs as
+      `analytics_user`, which owns `marts`.
+- [ ] **BLOCKED (downstream of the role):** warehouse connection in Metabase, Planning Team
+      permission group (query builder on marts, **native SQL off**, D-17), and the three
+      dashboards. Wiring Metabase to a privileged account in the meantime was rejected —
+      that is exactly the hole D-16 exists to close, and a "temporary" credential persists
+      encrypted in the app DB.
+- [x] `backup.sh` / `restore.sh`, and **the restore was actually performed** (D-15):
+      `metabase_app_20260806_140926.sql.gz` (124K) restored into a throwaway container →
+      135 tables, 1 dashboard, 37 saved questions, 1 user, 3 permission groups, 1 database
+      connection. Recorded in the deploy README; goes in `RUNBOOK.ko.md` in Phase 5.
 
 ### Phase 5 — metric views + handover (Days 11–14)
 
@@ -347,13 +367,14 @@ then remaining facts; **never** the grain tests).
 | Q-04 named owner | Chase from Day 0; deliverable in Phase 5 |
 | Q-06 dim_user attributes | Finalised in Phase 2 against the driver tree |
 | Q-08 Jeju/Mode C placeholders | Follow log recommendation: omit from marts, document in Bridge Register |
-| Q-09 grmc co-tenancy | Must be answered before `01_readonly_role.sql` (Phase 4 gate) |
+| Q-09 grmc co-tenancy | **Resolved 2026-08-06:** `grmc` schema deleted; it does not share this warehouse or the Metabase instance. No carve-out needed in the role |
 | Q-12 age exposure | Plan implements the log's recommendation (band in marts, raw age view-layer only) |
 | Q-13 production hosting | Untouched; everything here is hosting-independent per D-28 |
 | N-01 PII at EL boundary | **Decided (a) and implemented 2026-08-06** — §3.4 and Phase 0. Phase 1's full inventory found gaps in the pruning: see `PII_INVENTORY.md` R-1..R-8, all owner decisions |
 | N-02 cohort scoping | **Decided (row_filter at EL) and implemented 2026-08-06** — §3.4 |
 | **NEW: unmapped active cohort users** | Now **two**: `2725eece…` (Phase 0) and `fbe82bc5…` (Phase 1) — both real members, both joined 2026-05-01, no iccoli mapping. Owner follow-up required; `assert_unmapped_cohort_users_pinned` fails loudly if the set changes |
 | **NEW: dim_disease row count** | **Reconciled 2026-08-06:** all 35 catalog diseases are scored, plus exactly 9 scored-but-not-displayed extras (macular degeneration, brain aneurysm, cardiac arrhythmia, endometrial cancer, endometriosis, hepatocellular carcinoma, lung cancer, Parkinson's, PCOS). Owner: focus stays on the 35 — `dim_disease` seeds from the catalog; fact rows for the 9 simply don't join to the dim and are not user-facing |
+| **NEW: no CREATEROLE credential** | Blocks `bi_reader`, and therefore the Metabase warehouse connection, permission groups and dashboards. Needs an Azure admin to run `sql/01_readonly_role.sql` once (Phase 4) |
 | **NEW: glucose unit ambiguity** | **Resolved 2026-08-06:** owner chose normalisation to mg/dL; `<30 → ×18.0182` in staging, guarded by `assert_glucose_unit_gap_holds`. A per-row unit from the source would still be better than a threshold — worth raising with the Discovery team |
 | **NEW: deployment site code** | `dim_deployment_site.site_id = 'KR_LOOP_PILOT'` is a placeholder — no source carries a site id. Confirm before it appears as a dashboard label |
 | **NEW: `login_pw` in warehouse** | **Resolved 2026-08-06:** owner decided to discard the direct-identifier classes; `scripts/20260806_pii_cleanup_phase1.sql` (executed) dropped 26 columns across ichms/sibc/iccoli and stripped name keys from frozen legacy payloads; matching `exclude_columns` added to all three target configs. Remaining open items in PII_INVENTORY.md §Resolution status (ichms table-scope question, R-7, R-8, upstream `user_name` key) |
