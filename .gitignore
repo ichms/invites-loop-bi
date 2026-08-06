@@ -25,6 +25,7 @@ setup_env.sh
 # Local documentation for context
 docs/
 data/
+analysis/
 
 # Notebook exports (rebuild with nbconvert)
 analysis/*.html
