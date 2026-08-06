@@ -133,6 +133,21 @@ Surfaced explicitly per the log's §6 rule. None reverses a rationale; two simpl
    *not* the mapper. The 39 mapper-only entries have no sibc presence and therefore no facts;
    they are counted, not modelled. `dim_user` carries an `is_mapped` flag so the 1 unmapped
    cohort user keeps their sibc facts instead of being orphaned.
+6. **The log's "explicit residual term" on `fct_user_day` is retired (measured 2026-08-06).**
+   The log's model table says to carry the residual as a column, which assumes
+   `IRS ≈ PRS + LRS + MRS + residual`. All five values are integer **percentile ranks**
+   (1–100, zero decimal places, verified across 147k rows), and per `IRS-03` the IRS is an
+   ML combination of PRS, updated LRS and updated MRS, with IRS+ adding other diseases'
+   MRS. `IRS − (PRS+LRS+MRS+IRSp)` averages **−135** with a 42-point spread — an artefact,
+   not a decomposition. There is nothing to carry, so no residual column exists. Nothing
+   else in the log's rationale depends on it. Any future "how much of the risk is
+   lifestyle-driven" question is a modelling request to the IRS team, not a subtraction.
+7. **`fct_user_disease_day` is built from `stg_irs.user_irs_hist`, not the `risk_overview[]`
+   explosion (measured 2026-08-06).** The payload's per-disease `irs_rank` **is** the IRS+
+   score — it equals `irsp_score` on 12,806 of 12,900 matched user-day-disease rows (99.3%).
+   The relational table carries all five scores, typed, at an exactly verified grain, so
+   exploding the payload would re-derive one column and lose four. The payload remains the
+   source for narrative content (symptoms, care factors) if a model ever needs it.
 5. **`tb_ext_user_mapper` is now a full-refresh target (found and fixed 2026-08-06).** The
    warehouse briefly held 442 mapper rows while the live source held 441: a mapping had been
    *deleted* upstream, and an incremental load never propagates deletes — a stale mapper row
@@ -223,22 +238,34 @@ then remaining facts; **never** the grain tests).
       grain, D-05 not_null + `null_rate_below` pairs on every JSONB-extracted field
       (thresholds pinned to measured baselines, e.g. scores ~19–23% null → 0.35 ceiling).
 
-### Phase 2 — core marts (Days 3–5) — *load-bearing; if only this ships, handover still works*
+### Phase 2 — core marts (Days 3–5) — **DONE 2026-08-06** (`dbt build`: 110/110 green)
 
-- [ ] `dim_user` (SCD1, D-08): population = `sibc.user_master` per N-02, plus `is_mapped`
-      flag; `user_id`, sex, `birth_year`, `joined_dt`, site FK, device allocation flag.
-      Attribute list finalised against driver-tree Layer 2 (Q-06) — start minimal, widen on
-      demand.
-- [ ] `dim_date` (generated), `dim_disease` (35 rows from `IRSdiseasecatalog.csv` as a dbt
-      seed — KOR+ENG phenotype labels), `dim_action`, `dim_deployment_site` (one row, built
-      anyway per D-10's rationale).
-- [ ] `fct_user_day` (user × ymd): scalar IRS+/LRS/MRS/PRS + explicit residual column;
-      `age_at_activity` per D-24 formula **and `age_band_5y`** materialised (Q-12: the band is
-      what Metabase surfaces; raw age stays for view-layer computation).
-- [ ] `fct_user_disease_day` (user × ymd × disease_id): `risk_overview[]` explosion, kept
-      separate from `fct_user_day` per the log's explicit warning.
-- [ ] **Grain tests on every fact** (`dbt_utils.unique_combination_of_columns` on the declared
-      grain key; grain declared in a header comment). Never cut.
+- [x] `dim_user` (SCD1, D-08): 404 rows, population = `sibc.user_master` per N-02, with
+      `is_mapped` (402 true / 2 false), `sex`, `birth_year` (400 non-null), `joined_dt`,
+      `site_id` FK, plus app-account `channel_type`/`status`. **Device-allocation flag
+      omitted, not forgotten:** no source system in any of the five landing schemas carries
+      one (checked 2026-08-06). Deriving it from measurement activity would be a metric
+      definition disguised as a dimension attribute — it belongs in a `v_pi_*` view if it is
+      ever needed. Q-06 stays open for the rest of the attribute list; start minimal held.
+- [x] `dim_date` (generated, 1,095 rows, 2025-01-01 → end of next year, Monday weeks per
+      D-18), `dim_disease` (35 rows, seeded from `docs/01_product_specs/IRS-disease-catalog.csv`
+      — **the source file is CRLF; strip it or every id gains a trailing `\r` and joins fail
+      silently**), `dim_action`, `dim_deployment_site` (one row; the site code is a
+      placeholder — owner to confirm before it reaches a dashboard label).
+- [x] `fct_user_day` (user × ymd, 5,747 rows). **Union spine, not an inner join:** 4,299
+      user-days have both signals, 1,199 have only the integrated analysis, 249 only IRS
+      scores — an inner join would have silently dropped ~1,400 user-days. `has_intg_analysis`
+      / `has_irs_scores` expose the asymmetry as columns. `age_at_activity` (D-24 July-1
+      anchor) **and** `age_band_5y` (Q-12) materialised; measured range 21.8–87.1, 14 bands.
+      **No residual column** — see §3.6.
+- [x] `fct_user_disease_day` (user × ymd × disease, 180,969 rows — exactly the source count;
+      150,084 in-catalog). Built from `stg_irs__user_irs_hist`, not the payload explosion —
+      see §3.7. `is_in_catalog` separates the 35 user-facing diseases from the 9 scored-only
+      ones, so the fact stays complete while every disease-sliced metric filters or joins the
+      dim.
+- [x] **Grain tests on both facts** (`unique_combination_of_columns`, grain declared in each
+      header comment), plus `relationships` tests on every FK — the dim_disease one scoped
+      `where: is_in_catalog` because the 9 extras have no dim row by design.
 
 ### Phase 3 — remaining facts + orchestration (Days 6–7)
 

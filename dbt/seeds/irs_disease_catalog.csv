@@ -1,0 +1,36 @@
+disease_id,phenotype_kor,phenotype_eng
+thyroid_cancer,갑상선암,thyroid_cancer
+psoriasis,건선,psoriasis
+high_myopia,고도 근시,high_myopia
+hyperlipidemia,고지혈증,hyperlipidemia
+hypertension,고혈압,hypertension
+osteoarthritis,골관절염,osteoarthritis
+osteoporosis,골다공증,osteoporosis
+coronary_artery_disease,관상동맥질환,coronary_artery_disease
+age-related_cataract,노화성 백내장,age-related_cataract
+glaucoma,녹내장,glaucoma
+stroke,뇌졸중,stroke
+colorectal_cancer,대장암,colorectal_cancer
+rheumatoid_arthritis,류마티스 관절염,rheumatoid_arthritis
+chronic_obstructive_pulmonary_disease,만성 폐쇄성 폐질환,chronic_obstructive_pulmonary_disease
+chronic_kidney_disease,만성신장질환,chronic_kidney_disease
+bladder_cancer,방광암,bladder_cancer
+obesity,비만,obesity
+non-alcoholic_fatty_liver_disease,비알코올성 지방간,non-alcoholic_fatty_liver_disease
+renal_cell_carcinoma,신장암,renal_cell_carcinoma
+atopic_dermatitis,아토피 피부염,atopic_dermatitis
+allergic_rhinitis,알레르기성 비염,allergic_rhinitis
+alzheimers_disease,알츠하이머병,alzheimers_disease
+urolithiasis,요로 결석증,urolithiasis
+major_depressive_disorder,우울증,major_depressive_disorder
+gastric_cancer,위암,gastric_cancer
+breast_cancer,유방암,breast_cancer
+cervical_cancer,자궁경부암,cervical_cancer
+benign_prostatic_hyperplasia,전립선 비대증,benign_prostatic_hyperplasia
+prostate_cancer,전립선암,prostate_cancer
+type_2_diabetes,제2형 당뇨병,type_2_diabetes
+asthma,천식,asthma
+sinusitis,축농증,sinusitis
+pancreatic_cancer,췌장암,pancreatic_cancer
+gout,통풍,gout
+migraine,편두통,migraine

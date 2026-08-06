@@ -21,3 +21,19 @@ seeds:
       - name: jsonb_key
         data_tests:
           - not_null
+
+  - name: irs_disease_catalog
+    description: >
+      The 35 user-facing diseases, generated from
+      `docs/01_product_specs/IRS-disease-catalog.csv` (source file is CRLF —
+      strip it when regenerating, or every id gains a trailing \r and joins
+      silently fail). disease_id is the English phenotype, which is what the
+      scoring engine emits. Backs dim_disease.
+    config:
+      column_types:
+        disease_id: text
+        phenotype_kor: text
+        phenotype_eng: text
+    columns:
+      - name: disease_id
+        data_tests: [not_null, unique]

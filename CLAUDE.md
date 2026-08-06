@@ -10,13 +10,16 @@ It runs as **Apache Airflow** DAGs (the `dags/` folder is the Airflow DAGs direc
 Python >= 3.13, managed with **uv**, `src/` layout.
 
 > **State of the repo:** extract and load are implemented, tested against the real databases,
-> and wired into DAGs. The transform layer is **dbt** (`dbt/` at the repo root) — the **staging
-> layer is built** (sources over all five landing schemas, staging views, allow-list seed,
-> drift/grain/null-rate tests); **marts are the next stage** (Phase 2). Modelling decisions
-> live in `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md`, and the Q-11 column
-> classification in `PII_INVENTORY.md` — read them before touching `dbt/`. `main.py` and
-> `src/pipeline.py` are leftover empty stubs; the real entry point is
-> `src/invites_loop_bi/pipeline.py`.
+> and wired into DAGs. The transform layer is **dbt** (`dbt/` at the repo root); the **staging
+> layer and the core marts are built** — sources over all five landing schemas, staging views,
+> allow-list seed + drift test, five dims and two facts (`fct_user_day`,
+> `fct_user_disease_day`) with grain and FK tests. `dbt build` is 110/110 green. **Next:
+> Phase 3** — remaining facts (`fct_coaching_event`, `fct_measurement`, `fct_app_action`), the
+> `transform_dbt_build` DAG, and real schedules on the five ELT DAGs. Modelling decisions live
+> in `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` (which records where
+> measurement overrode the log — §3), and the Q-11 column classification in `PII_INVENTORY.md`
+> — read them before touching `dbt/`. `main.py` and `src/pipeline.py` are leftover empty
+> stubs; the real entry point is `src/invites_loop_bi/pipeline.py`.
 
 ## Commands
 

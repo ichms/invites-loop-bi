@@ -1,0 +1,181 @@
+# Tests for the marts layer. The grain test on each fact is the contract that
+# makes the rest survivable (D-04) — it is the one thing the cut order never
+# touches. Relationship tests are the second half: they turn "this fact row has
+# no dimension row" from a silently-dropped chart row into a build failure.
+
+version: 2
+
+models:
+  - name: dim_user
+    description: >
+      SCD1 user dimension. Population = the sibc cohort (N-02), 404 rows.
+      is_mapped flags cohort members with no iccoli link so they keep their
+      facts instead of being orphaned. No name, no DOB, no static age.
+    columns:
+      - name: user_id
+        data_tests: [not_null, unique]
+      - name: site_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_deployment_site')
+                field: site_id
+      - name: birth_year
+        description: Null for 4 of 404 users (measured 2026-08-06); age columns in the facts go null with it rather than guessing.
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.05}
+      - name: is_mapped
+        data_tests: [not_null]
+
+  - name: dim_date
+    description: Generated calendar, 2025-01-01 through the end of next year. Weeks start Monday (D-18).
+    columns:
+      - name: date_day
+        data_tests: [not_null, unique]
+      - name: week_start_date
+        data_tests: [not_null]
+
+  - name: dim_disease
+    description: The 35 user-facing diseases with Korean + English labels. The 9 scored-but-not-displayed ids are deliberately absent.
+    columns:
+      - name: disease_id
+        data_tests: [not_null, unique]
+      - name: phenotype_kor
+        data_tests: [not_null]
+
+  - name: dim_deployment_site
+    description: One row today (placeholder code — see the model header). Exists so "which site" is expressible before multi-site is real.
+    columns:
+      - name: site_id
+        data_tests: [not_null, unique]
+
+  - name: dim_action
+    description: App-action catalogue behind fct_app_action (Phase 3).
+    columns:
+      - name: action_no
+        data_tests: [not_null, unique]
+
+  - name: fct_user_day
+    description: >
+      GRAIN: user × ymd. Union spine of IRS-scoring days and integrated-analysis
+      days — has_irs_scores / has_intg_analysis expose which side a row came
+      from. Carries age_at_activity + age_band_5y (D-24/D-25, Q-12).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, ymd_date]
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: ymd_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: age_at_activity
+        description: Null only where birth_year is null (4 users); a rise here means the birth_year path broke.
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.05}
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 120
+              config:
+                where: "age_at_activity is not null"
+      - name: age_band_5y
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 120
+              config:
+                where: "age_band_5y is not null"
+      - name: diseases_scored
+        data_tests: [not_null]
+      - name: has_intg_analysis
+        data_tests: [not_null]
+      - name: has_irs_scores
+        data_tests: [not_null]
+
+  - name: fct_user_disease_day
+    description: >
+      GRAIN: user × ymd × disease. All five percentile-rank scores from the
+      relational scoring history. is_in_catalog separates the 35 user-facing
+      diseases from the 9 scored-only ones.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, ymd_date, disease_id]
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: ymd_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: disease_id
+        description: >
+          Relationship to dim_disease is asserted only for catalog diseases —
+          the 9 scored-but-not-displayed ids have no dim row by design.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_disease')
+                field: disease_id
+              config:
+                where: "is_in_catalog"
+      - name: is_in_catalog
+        data_tests: [not_null]
+      # Scores are 1..100 percentile ranks. A value outside that range means the
+      # engine changed its output contract.
+      - name: irs_score
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 100
+              config:
+                where: "irs_score is not null"
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: irsp_score
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 100
+              config:
+                where: "irsp_score is not null"
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: lrs_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: mrs_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
+      - name: prs_score
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.35}
