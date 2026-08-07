@@ -10,21 +10,128 @@ Last updated: **2026-08-07**. Architecture in `CLAUDE.md`; decisions in
 
 ## Where we are
 
-**All five phases are done and committed.** `dbt build` 184/184, `pytest`
+**All five phases are done and committed.** `dbt build` **211/211**, `pytest`
 117/117. Extract → load → transform → marts → metric views → Metabase all run
 **when invoked by hand**. Nothing runs unattended — see §3.
 
 | Piece | State |
 |---|---|
 | `extract/`, `load/`, `pipeline.py` | done |
-| dbt staging (10 views, allow-list + drift test) | done |
+| dbt staging (12 views, allow-list + drift test) | done |
 | dbt marts — 6 dims, 5 facts, grain + FK tests | done |
 | Metric views — 7 `v_pi_*` + `v_bridge_pi_to_kpi` | done |
 | Metabase v0.63.5 + `bi_reader` + 3 dashboards | done, local |
 | Metabase FK metadata (14 cols) | done 2026-08-07, pushed from dbt |
+| **`fct_user_day` as a behavioural panel** | **done 2026-08-07 — dense spine, 74,410 rows** |
 | PII inventory (Q-11) + cleanup | done; R-7/R-8 open |
 | 5 ELT DAGs + `transform_dbt_build` | **written; never run on a schedule** |
+| **BI viewer choice** | **reopened 2026-08-07 — see Frame 4** |
 | **Named owner (Q-04)** | **deferred — interim only** |
+
+---
+
+## The frames we now work under
+
+Four framings changed on 2026-08-07. They are recorded here because they
+reorder the remaining work, and because each corrects something previously
+written down as settled.
+
+### Frame 1 — The mart is the deliverable; the viewer is the cheap layer
+
+The analytical bar for this project is set by work already done in
+`analysis/` and `~/AgentWorkspaces/invites_loop/bi`: Spearman rank
+correlation, Mann-Whitney U, and **OLS with covariate control**.
+
+**No GUI BI tool does any of that** — not Metabase, Superset, Lightdash or
+Grafana. So analytical depth **cannot discriminate between viewers**. It is a
+requirement on the *warehouse*, which is what decision-log line 39 said all
+along: the semantic layer lives in PostgreSQL and git, not inside the BI tool.
+
+Consequence for sequencing: **make the marts analysis-ready first, choose the
+viewer second.** Choosing the viewer first optimises the layer we already
+decided is disposable (D-19: rebuilding three dashboards is half a day).
+
+### Frame 2 — Design for the operations, not for the request
+
+Measured on 2026-08-07: the point-mission notebook reads `stg_iccoli` (32
+refs), `stg_sibc` (9), `stg_discovery` (1) and **`marts` zero times**. The
+star schema served the viewer and nothing else. Porting that one notebook
+would have fixed exactly one notebook.
+
+The five verification rounds in `DASHBOARD_METRIC_FEEDBACK.md` are not five
+questions. They are the **same seven operations** applied to different
+channels:
+
+| Operation | Demands of the mart |
+|---|---|
+| Relative-time cohorting (M0–M7, not calendar) | `months_since_joined` |
+| Denominator declaration | numerator **and** denominator as paired columns |
+| Control for app access days | `app_login_events` as a first-class column |
+| Negative control | parallel channels at identical grain |
+| Within-person deviation | user × period panel with history to centre on |
+| Segment moderation | conformed age / sex / BMI bands |
+| Observability flags | who is even observable per channel |
+
+Build for those seven and the next request is a query, not a project.
+
+### Frame 3 — Zero days are the denominator
+
+A behavioural rate needs the days a user did nothing. Aggregating over a spine
+of only-active days divides by the wrong number and biases every rate upward.
+
+This is not theoretical here. `DASHBOARD_METRIC_FEEDBACK.md` §5.2 records a
+published *"dietary logging is 미흡"* verdict that was a pure denominator
+artifact — per-recorder intensity had **risen** 6.2 → 21.1 days/month. The
+verdict reversed once the denominator was stated.
+
+So: any fact backing behavioural analysis is dense by default, and the
+reconciliation test is not optional (see §7).
+
+### Frame 4 — The viewer decision is reopened, and two rejections were wrong
+
+`INVITES_LOOP_BI_DECISION_LOG.md` §4.1 rejected Superset and Lightdash. Both
+reasons have failed:
+
+- **Superset — the stated reason is factually wrong.** The log says "four
+  moving parts: Redis, Celery workers, metadata DB, `superset_config.py`".
+  Redis and Celery are **not required**; they buy async queries, chart caching,
+  alerts/reports and thumbnails. Run synchronously and it is two containers —
+  parity with Metabase. Corrected in the log.
+- **Lightdash — the disqualifier expired.** The log rejected it because it
+  "requires a dbt project as an absolute dependency (**none exists today**)".
+  One exists now. The log also called it "**best governance fit of the four,
+  wrong constraint**"; the constraint changed, the fit did not.
+
+Still rejected, more firmly: **Redash** (SQL-only, structurally contradicts
+D-17; maintenance mode) and **Grafana** (observability tool — panel-per-query,
+no semantic layer, no ad-hoc multi-dimensional exploration).
+
+What actually separates the candidates now:
+
+| Axis | Metabase OSS | Lightdash | Superset |
+|---|---|---|---|
+| Non-dev GUI authoring | best | good | weakest |
+| Implicit FK joins | **yes** (built 2026-08-07) | dbt-defined | no — dataset-bound |
+| Dashboards as code | **no** (Pro only) | yes | yes (YAML) |
+| Row-level security | **no** (Pro only) | — verify | yes, free |
+| Audit logs | **no** (Pro only) | — verify | — |
+| Compliance upgrade path in-org | Pro | **SOC 2 / HIPAA / BAA** | none (vendor: Preset) |
+| Korean locale | solid (`ko`) | **verify** | **verify — likely partial** |
+| MCP | yes | **no on OSS** | — |
+
+The MCP gap matters less than it looks: agents already reach the warehouse
+directly via the `invites-loop-olap-connection` skill, and this session's
+finding was that Metabase MCP does **not** block write tools, which is a
+liability as much as a feature.
+
+**Triggers that would force the switch:** a second deployment site needing
+row-level restriction (`dim_deployment_site` exists, `KR_LOOP_PILOT` is a
+placeholder), or an audit-logging requirement for clinical/genomic data.
+
+**Recommended next step, not yet done:** spike Lightdash against the same
+acceptance test used for Metabase — filter `fct_user_disease_day` by
+`dim_disease.phenotype_kor` **and** `dim_user.sex` without SQL — and check
+Korean UI coverage. Do it *after* the marts work, per Frame 1.
 
 ---
 
@@ -61,6 +168,102 @@ Leads with dbt-metabase; manual UI/API route kept as an explicit fallback; the
 that `marts.yml` wins if the two disagree. §2 Step 5 now points at the same
 command instead of the UI. API examples switched from `X-Metabase-Session` to
 `x-api-key`.
+
+### 7. `fct_user_day` is now a behavioural panel — DONE
+
+Frames 2 and 3 made concrete. `dbt build` 184 → **211/211**.
+
+**Spine: sparse → dense.** 5,747 → **74,410 rows**. Was the union of
+IRS-scoring and integrated-analysis days — 9.3% of the user-days the cohort
+actually lived. Now every day from the earlier of enrolment and first observed
+activity, to the observation frontier.
+
+Two design points worth not re-deriving:
+
+- **Frontier, not `current_date`.** The upper bound is the last day any
+  behavioural source actually delivered. Extending to today manufactures
+  zero-activity days for dates the ELT has not loaded, and a flat line of false
+  zeros at the right edge reads as a product collapse. Per-channel lag is *not*
+  modelled — check `dbt source freshness` before reading the last few days.
+- **Spine starts before enrolment where activity did.** `joined_dt` is entry to
+  the sibc study cohort; app usage predates it for some users. It also gives
+  §1.3 the pre-period its ownership-transfer natural experiment needs.
+
+**New columns:** `days_since_joined` / `months_since_joined`,
+`app_login_events` + `did_login`, `routines_delivered` / `routines_completed`
+(denominator pair), `manual_measurements`, `meal_records`,
+`wearable_streams_active`, `app_actions`, `active_input_events` /
+`had_passive_collection`.
+
+**New staging models:** `stg_discovery__lifelog_meal` (the C22 channel — the
+dashboard had `disc_lifelog_user_food` at 11 users while the real one carries
+335) and `stg_discovery__lifelog_wearable_day` (union of all five streams per
+C3; materialised as a **table** because heartrate is ~8.5M rows).
+
+**A defect found by reconciliation, not by tests.** The first spine started at
+`joined_dt` and silently dropped **381 meal records and 23 of 335 recorders**.
+Everything built; every grain and `not_null` test passed. It surfaced only when
+totals were compared against source. Hence
+`dbt/tests/assert_user_day_spine_loses_no_activity.sql`, which asserts fact
+totals equal staging totals per channel — that test is what makes the spine
+bounds safe to change. **Do not delete it when editing the spine.**
+
+**Validation:**
+
+| Check | Documented | Panel |
+|---|---|---|
+| Meal users / records | 335 | **335 / 37,374 — exact, zero loss** |
+| §4.5 routine completion @ 16+ login days | 65–72% | **71.6%** |
+| §4.5 gradient across buckets | ~3× | 7.0% → 22.4% → **71.6%** |
+| Wearable users @ 2026-07-31 | 167 | **177 — UNRECONCILED** |
+
+The dominant-variable finding reproduces. The low buckets read lower than the
+document because this pools completions/deliveries where the source averaged
+per-user rates, and because the dense spine adds zero-activity months to the
+denominator — the denominator effect itself. **The two are not directly
+comparable; do not quote them side by side.**
+
+---
+
+## Start here next session
+
+In order. The first three continue Frame 2 and are pure code; the fourth is the
+viewer spike from Frame 4 and should wait until they land.
+
+### A. Reconcile the wearable count — 177 vs the documented 167
+
+Same cutoff date (2026-07-31), ten users apart. Two candidate causes, neither
+checked: **cohort scope** (§1 worked from the 442 LOOP-mapped set, `dim_user`
+is the 404 sibc cohort) or a **stream-filter difference** in what counts as a
+firing. Until this closes, `wearable_streams_active` should not be quoted
+against C3's 167. Meal reconciles exactly, so the join path itself is sound.
+
+### B. Extend `dim_user` — the segment attributes Frame 2 needs
+
+Still missing, and §1/§2 both turn on them:
+
+- **`weight` / `height` / `bmi_band`** — `sibc.user_master` has them complete
+  for all 403 (§2.1 measured zero missing). §2.5 warns BMI is non-monotonic and
+  confounded with age, so band it and never interpret it alone.
+- **Cohort group — Ulsan participant vs internal staff.** §1's entire result is
+  this 392 / 50 split, and it is representable nowhere today. Note §1.5's
+  caveat: 29 of the 50 staff have accounts only, so the contrast is
+  "participation contract vs none", **not** "voluntary vs involuntary". Whatever
+  the column is called, that distinction must survive into its description.
+- **Per-user observability flags per channel** — §2.4's structural finding
+  (wearable ownership and routine completion run *inverse* across age; only 98
+  users have both) is uncomputable without them.
+
+### C. Re-push metadata to Metabase
+
+`fct_user_day` gained ~11 columns that Metabase has never seen, and their
+descriptions carry the denominator and control-variable warnings. Needs a fresh
+admin API key and one `dbt-metabase` run — `HOWTO.md` §3 Option A. Delete the
+key afterwards.
+
+### D. Then, and only then, spike Lightdash
+
+Per Frame 1 and Frame 4. Acceptance test and open questions are in Frame 4.
 
 ---
 

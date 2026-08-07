@@ -372,7 +372,8 @@ then remaining facts; **never** the grain tests).
 ### Phase 5 — metric views + handover (Days 11–14) — **DONE 2026-08-06 except Q-04**
 
 - [x] **7 `v_pi_*` views + 1 `v_bridge_*` view** in `marts`, materialised as views, one
-      metric per view (`dbt/models/marts/metrics/`). `dbt build` 184/184 green.
+      metric per view (`dbt/models/marts/metrics/`). `dbt build` 184/184 green at the time.
+      **2026-08-07: 211/211** after `fct_user_day` became a dense behavioural panel (D-29/D-30).
 - [x] **No `v_kpi_*` views, deliberately** (Q-08 + the log's §4.5). Every headline KPI —
       30-day readmission, LOS, MSPB, Self-Pay Bad Debt — is a hospital-financial measure
       with **zero source tables** here: no admission, discharge, claim or billing data

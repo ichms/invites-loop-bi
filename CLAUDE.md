@@ -13,8 +13,12 @@ Python >= 3.13, managed with **uv**, `src/` layout.
 > the real databases. The transform layer is **dbt** (`dbt/` at the repo root): sources over
 > all five landing schemas, staging views, allow-list seed + drift test, and the full star —
 > six dims and five facts (`fct_user_day`, `fct_user_disease_day`, `fct_measurement`,
-> `fct_coaching_event`, `fct_app_action`) with grain and FK tests. `dbt build` is 184/184
-> green; `pytest` 117/117. DAGs are **written but have never run on a schedule** — five ELT
+> `fct_coaching_event`, `fct_app_action`) with grain and FK tests. `dbt build` is 211/211
+> green; `pytest` 117/117. **`fct_user_day` is a dense behavioural panel** since 2026-08-07
+> (every user-day from the earlier of enrolment and first activity, ~74k rows) — the zero
+> days are the denominator, and a reconciliation test asserts no activity falls outside the
+> spine. Read `todo.md` "The frames we now work under" before changing it. DAGs are
+> **written but have never run on a schedule** — five ELT
 > DAGs declare 01:00 KST and `transform_dbt_build` 02:00 KST, but no scheduler is deployed,
 > all five ELT DAGs are paused, and `transform_dbt_build` has never been parsed. Every load
 > and `dbt build` to date was a manual CLI run; "who runs the scheduler" is Q-13, still open.

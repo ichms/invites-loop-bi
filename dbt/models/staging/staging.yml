@@ -162,3 +162,40 @@ models:
         data_tests: [not_null]
       - name: login_datetime
         data_tests: [not_null]
+
+  # The two lifelog models below back the behavioural half of fct_user_day.
+  # The older stg_discovery__* models carry no declarations; these do, because
+  # their grain is what keeps fct_user_day's grain true.
+  - name: stg_discovery__lifelog_meal
+    description: >
+      Surviving meal records (is_deleted filtered out), joined to a user through
+      stg_discovery__lifelog_user_info. This is the channel the evidence
+      dashboard reported as disc_lifelog_user_food — 11 users — while the real
+      one carries 335 users and ~36.5k records (C22 / §5).
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+      - name: recorded_date
+        data_tests: [not_null]
+
+  - name: stg_discovery__lifelog_wearable_day
+    description: >
+      One row per (user, day, stream) a wearable stream fired. The union of all
+      five streams is the settled definition of device ownership (C3), after
+      three competing definitions produced 130 / 157 / 167 and were quoted
+      interchangeably. Materialized as a table — heartrate alone is ~8.5M rows.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, wear_date, stream_code]
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+      - name: wear_date
+        data_tests: [not_null]
+      - name: stream_code
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [step, activity, heartrate, oxygen_saturation, sleep]

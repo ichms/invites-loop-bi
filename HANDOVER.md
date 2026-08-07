@@ -16,7 +16,7 @@ Two repos:
 
 | # | Deliverable | Status | Where |
 |---|---|---|---|
-| 1 | dbt project (models, tests, docs) in git | **done** | `dbt/` — 18 models, 184 passing build steps |
+| 1 | dbt project (models, tests, docs) in git | **done** | `dbt/` — 34 models, **211** passing build steps |
 | 2 | Deploy repo (compose, env template, role SQL, backup/restore) | **done** | `../invites-loop-bi-deploy` |
 | 3 | Metabase running, marts-only read-only role, permission groups | **done (local)** | Production hosting deliberately undecided (Q-13) |
 | 4 | Verified backup restore — performed, not merely scripted | **done** | 2026-08-06; 4 dashboards / 11 questions / 4 groups recovered |

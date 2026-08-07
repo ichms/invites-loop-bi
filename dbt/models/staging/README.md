@@ -19,3 +19,16 @@ What belongs here (and nowhere downstream):
   fails the build when the payload grows a key the allow-list does not know.
 - PII reduction (D-22/D-23): `birth` → `birth_year int`; no username column
   is ever selected.
+
+**One model here is a table, not a view.** `stg_discovery__lifelog_wearable_day`
+is `materialized='table'` because `disc_lifelog_user_heartrate` alone is ~8.5M
+sample rows; as a view it would re-scan on every downstream query and every
+Metabase card. It collapses to a few thousand user-days, so the table is small
+even though its input is not. Keep the exception rare and justified in the
+model header.
+
+**Lifelog models gain their user through a join.** Every per-measurement
+discovery table keys on `user_lifelog_sn` and carries no user of its own —
+`stg_discovery__lifelog_user_info` is the only place a `user_id` appears. A CTE
+that selects `user_id` straight from a measurement or meal source will not
+compile.

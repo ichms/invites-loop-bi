@@ -199,13 +199,28 @@ models:
 
   - name: fct_user_day
     description: >
-      GRAIN: user × ymd. Union spine of IRS-scoring days and integrated-analysis
-      days — has_irs_scores / has_intg_analysis expose which side a row came
-      from. Carries age_at_activity + age_band_5y (D-24/D-25, Q-12).
+      GRAIN: user × ymd, DENSE — every day from the user's joined_dt to the
+      observation frontier, including days with no activity at all. Changed from
+      the old sparse scoring-only spine on 2026-08-07 (5,747 rows = 9.3% of
+      lived user-days); a behavioural panel needs the zero days because they are
+      the denominator. has_irs_scores / has_intg_analysis still mark the
+      scoring-day subset. Carries age_at_activity + age_band_5y (D-24/D-25,
+      Q-12), relative time since join, and per-channel behaviour with
+      active/passive separated.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [user_id, ymd_date]
+      # A completion can never exceed its delivery. This is the denominator
+      # contract that DASHBOARD_METRIC_FEEDBACK §5.2 records being violated in
+      # a published verdict — asserted here so it fails the build instead.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "routines_completed <= routines_delivered"
+      # NOT tested: days_since_joined >= 0. The spine deliberately starts before
+      # enrolment where a user was already active, so negative values are
+      # correct and are what makes a pre-period available (§1.3). Asserting
+      # non-negativity here is what silently dropped 381 meal records.
     columns:
       - name: user_id
         data_tests:
@@ -245,6 +260,72 @@ models:
       - name: has_intg_analysis
         data_tests: [not_null]
       - name: has_irs_scores
+        data_tests: [not_null]
+
+      - name: days_since_joined
+        description: >
+          Days since the user's joined_dt. Use this, not calendar date, when
+          comparing trajectories — §2.1: enrolment spans nine months, so
+          calendar time mixes cohort entry with behaviour change.
+        data_tests: [not_null]
+      - name: months_since_joined
+        description: >
+          Completed months since join (M0, M1, …). Censoring is NOT flagged per
+          row because it is a property of an aggregate: high months contain only
+          early registrants. Check the cell count before reading a trend.
+        data_tests: [not_null]
+
+      - name: app_login_events
+        description: >
+          THE dominant control variable, not one channel among several. §4.5:
+          routine completion ~24% at 0–5 login days vs ~65–72% at 16+, and
+          controlling for it reverses the sign of the premium-content effect.
+          Condition on this before claiming any behavioural comparison.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+      - name: did_login
+        data_tests: [not_null]
+      - name: routines_delivered
+        description: The denominator. What the engine offered, whether or not the user acted.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+      - name: routines_completed
+        description: The numerator. Never compute a rate from this without routines_delivered in the same row.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+      - name: manual_measurements
+        description: Discrete readings the user took deliberately — BP, body, bodyfat, grip, glucose. ACTIVE input.
+        data_tests: [not_null]
+      - name: meal_records
+        description: >
+          Surviving meal records from disc_lifelog_user_meal — the channel the
+          dashboard previously reported as disc_lifelog_user_food (11 users)
+          while the real one had 335. See C22 / §5.
+        data_tests: [not_null]
+      - name: wearable_streams_active
+        description: >
+          Distinct wearable streams that fired (0–5). Wear-day, not intensity:
+          §1.1④ found 91.6% of holders at a perfect 30/30, because a worn watch
+          collects passively. PASSIVE collection.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0, max_value: 5}
+      - name: app_actions
+        data_tests: [not_null]
+      - name: active_input_events
+        description: >
+          manual_measurements + meal_records. Kept separate from passive
+          collection (§2.3): active channels were cooling while the wearable
+          sat at its ceiling, and one summed "engagement" number hides that.
+        data_tests: [not_null]
+      - name: had_passive_collection
         data_tests: [not_null]
 
   - name: fct_user_disease_day
