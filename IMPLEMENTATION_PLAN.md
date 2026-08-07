@@ -305,9 +305,12 @@ then remaining facts; **never** the grain tests).
       done in its staging model.
 - [x] `transform_dbt_build` DAG: `dbt source freshness` (non-blocking — a stale source must be
       loud, but yesterday's numbers rebuilt beat no numbers) then `dbt build --fail-fast`,
-      02:00 KST. The five ELT DAGs now run 01:00 KST (was `SCHEDULE = None`); KST rather than
-      UTC because `ymd` is a business date on a KST midnight boundary. All six DAGs verified
-      to parse with no import errors.
+      02:00 KST. The five ELT DAGs now **declare** 01:00 KST (was `SCHEDULE = None`); KST
+      rather than UTC because `ymd` is a business date on a KST midnight boundary. All six DAGs
+      verified to parse with no import errors.
+      **Correction 2026-08-07:** declaring a schedule is all that happened. No scheduler is
+      deployed, the five ELT DAGs are paused, and `transform_dbt_build` has never been parsed
+      by a scheduler — so none of these have ever fired. See `todo.md` §3; it is Q-13.
 - [x] `dbt docs generate --static` → `dbt/docs/dbt_docs.html`, committed (Q-07). Note: the
       root `.gitignore` had an unanchored `docs/` rule that also swallowed `dbt/docs/`; it is
       now root-anchored (`/docs/`).

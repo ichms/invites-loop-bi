@@ -14,8 +14,11 @@ Python >= 3.13, managed with **uv**, `src/` layout.
 > all five landing schemas, staging views, allow-list seed + drift test, and the full star —
 > six dims and five facts (`fct_user_day`, `fct_user_disease_day`, `fct_measurement`,
 > `fct_coaching_event`, `fct_app_action`) with grain and FK tests. `dbt build` is 184/184
-> green; `pytest` 117/117. Orchestration is wired: five ELT DAGs at 01:00 KST,
-> `transform_dbt_build` at 02:00 KST. Metric views (`v_pi_*` / `v_bridge_*`) sit in
+> green; `pytest` 117/117. DAGs are **written but have never run on a schedule** — five ELT
+> DAGs declare 01:00 KST and `transform_dbt_build` 02:00 KST, but no scheduler is deployed,
+> all five ELT DAGs are paused, and `transform_dbt_build` has never been parsed. Every load
+> and `dbt build` to date was a manual CLI run; "who runs the scheduler" is Q-13, still open.
+> Metric views (`v_pi_*` / `v_bridge_*`) sit in
 > `dbt/models/marts/metrics/`. **All five phases are complete**; Metabase runs locally from
 > the sibling repo `invites-loop-bi-deploy` (compose stack, `bi_reader` role, backup/restore,
 > Korean runbook + metrics guide). The remaining open item is **Q-04, a named owner in

@@ -219,30 +219,44 @@ PGPASSWORD='...' psql "host=... dbname=invites_dw user=bi_reader sslmode=require
 If that fails, re-run `sql/02_grants.sql` from the deploy repo as
 `analytics_user`.
 
-### Step 5 — sync Metabase, then set FK metadata
+### Step 5 — push metadata to Metabase
 
-Admin → Databases → *Invites Loop DW (marts)* → **Sync database schema now**.
+Re-run the dbt-metabase command in section 3, Option A. It syncs the schema,
+pushes your new descriptions, and sets the FK metadata from the `relationships`
+tests you declared in step 2 — all in one go.
 
-Then set the foreign keys (section 3) — **without this the new table cannot be
-joined in the query builder.** This is the step people miss.
+**Without this the new table cannot be joined in the query builder.** This is
+the step people miss. Declaring a `relationships` test is what makes the join
+appear; skipping the push means it never reaches Metabase.
 
 ---
 
 ## 3. Joining tables in Metabase
 
-### Why joins don't work yet
+### Why joins need FK metadata
 
 The star schema uses natural keys, not surrogate keys (D-07), and **dbt does
 not create foreign-key constraints in PostgreSQL**. Metabase infers join
 relationships from FK constraints during sync — with none present, it sees
-eleven unrelated tables.
+eleven unrelated tables and cross-table filtering is unavailable in the query
+builder.
 
-Measured 2026-08-06: **0 of 21 key columns are marked as foreign keys.** That is
-the whole reason cross-table filtering isn't available in the GUI.
+| Date | FK columns set |
+|---|---|
+| 2026-08-06 | 0 of 21 — cross-table filtering dead in the GUI |
+| 2026-08-07 | **14 of 14**, pushed from dbt (Option A) |
 
-There are three ways forward.
+The 14 relationships are declared as native dbt `relationships` tests in
+`dbt/models/marts/marts.yml`, so **the FK graph is in git**. What is *not* in git
+is Metabase's copy of it: that lives in the application database (the
+`metabase_app_db_data` volume). It survives restarts and is included in
+`scripts/backup.sh`, but a rebuilt-from-scratch instance has none of it until
+Option A is re-run. Treat `marts.yml` as the source of truth and the UI as a
+cache of it.
 
-### Option A — set FK metadata (recommended; do this once)
+There are three ways to join. Option A is how the FK metadata above got there.
+
+### Option A — push FK metadata from dbt (recommended)
 
 This is the intended path and the reason the star schema exists (D-06: Metabase
 reads FK metadata into join dropdowns). Once set, a Planning Team member can
@@ -250,10 +264,60 @@ filter a fact by a dimension attribute without writing any SQL — e.g. filter
 `fct_user_disease_day` by `dim_disease.phenotype_kor` and `dim_user.sex` at the
 same time.
 
+Do it with **`dbt-metabase`** (in the `transform` dependency group, so `uv sync`
+already installed it). It reads `dbt/target/manifest.json` and pushes model and
+column descriptions plus FK relationships into Metabase over the API, **inferring
+the foreign keys from native dbt `relationships` tests**. Ours are already
+declared, so this ships the graph from git rather than reproducing it as clicks.
+
+```bash
+source setup_env.sh
+uv run dbt parse --project-dir dbt --no-partial-parse   # refresh manifest.json
+
+# short-lived admin API key: Admin → Settings → Authentication → API keys
+KEY='mb_...'
+
+uv run dbt-metabase models \
+  --manifest-path dbt/target/manifest.json \
+  --metabase-url http://localhost:3000 \
+  --metabase-api-key "$KEY" \
+  --metabase-database "Invites Loop DW (marts)" \
+  --include-schemas marts
+```
+
+**Delete the API key afterwards.** It is an admin credential with no expiry;
+minting one per run is cheaper than managing a long-lived one.
+
+Verify — should print 14:
+
+```bash
+curl -s -H "x-api-key: $KEY" http://localhost:3000/api/database/2/metadata \
+ | python3 -c "import json,sys; print(sum(1 for t in json.load(sys.stdin)['tables'] for f in t['fields'] if f.get('semantic_type')=='type/FK'), 'FK columns')"
+```
+
+Then confirm it actually works in the GUI: build a question on
+`fct_user_disease_day` and break out by `dim_disease.phenotype_kor` **and**
+`dim_user.sex` at once. Column headers rendered as `Disease → Phenotype Kor`
+are Metabase's implicit-join notation — they only appear when the FK graph is
+live.
+
+**If the pre-flight sync fails.** The tool calls
+`POST /api/database/2/sync_schema` first, which makes Metabase connect to the
+warehouse. Off the corporate network that returns `422 — Timed out after 10.0 s`,
+which looks like a dbt-metabase bug and is not one. Either get back on the
+network, or add `--sync-timeout 0` to skip the pre-flight — safe whenever the
+schema is already in sync.
+
+Re-run this after **any** change to the marts: new model, new `relationships`
+test, changed description. It is idempotent.
+
+#### Fallback — setting them by hand
+
+Only if dbt-metabase is unavailable. The mapping below is what should exist, and
+stays useful as a statement of intent regardless of how it is applied.
+
 **In the UI:** Admin → Table Metadata → pick the database → pick a table →
 find the column → set **Field Type** to *Foreign Key* → choose the target field.
-
-The relationships to set:
 
 | From | Column | To |
 |---|---|---|
@@ -272,12 +336,15 @@ The relationships to set:
 | `fct_app_action` | `action_date` | `dim_date.date_day` |
 | `dim_user` | `site_id` | `dim_deployment_site.site_id` |
 
+These 14 rows are the same 14 `relationships` tests in `marts.yml`. If the two
+ever disagree, `marts.yml` wins — re-run Option A rather than editing the UI.
+
 **Via the API** (faster than 14 UI visits). For each pair, find the field ids
 and PUT the semantic type:
 
 ```bash
 # 1. find field ids
-curl -s -H "X-Metabase-Session: $SESSION" \
+curl -s -H "x-api-key: $KEY" \
   http://localhost:3000/api/database/2/metadata \
   | python3 -c "
 import json,sys
@@ -288,7 +355,7 @@ for t in json.load(sys.stdin)['tables']:
 
 # 2. mark one column as an FK pointing at a target field id
 curl -s -X PUT http://localhost:3000/api/field/<FIELD_ID> \
-  -H "X-Metabase-Session: $SESSION" -H 'Content-Type: application/json' \
+  -H "x-api-key: $KEY" -H 'Content-Type: application/json' \
   -d '{"semantic_type": "type/FK", "fk_target_field_id": <TARGET_FIELD_ID>}'
 ```
 
@@ -347,7 +414,7 @@ source of truth; the wide model is a convenience layer over it.
 
 | Situation | Use |
 |---|---|
-| Ongoing self-service for the Planning Team | **A** — set FK metadata once |
+| Ongoing self-service for the Planning Team | **A** — push FK metadata from dbt |
 | One-off exploration by an analyst | **B** — explicit join |
 | The same 3-table join in five saved questions | **C** — pre-join in dbt |
 | A number that will be quoted in meetings | A metric view (`v_pi_*`) — see `METRICS.ko.md` |

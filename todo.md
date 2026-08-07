@@ -1,6 +1,6 @@
 # TODO — pick up here
 
-Last updated: **2026-08-06**. Architecture in `CLAUDE.md`; decisions in
+Last updated: **2026-08-07**. Architecture in `CLAUDE.md`; decisions in
 `INVITES_LOOP_BI_DECISION_LOG.md`; what measurement overrode in
 `IMPLEMENTATION_PLAN.md` §3; handover state in `HANDOVER.md`.
 
@@ -11,90 +11,87 @@ Last updated: **2026-08-06**. Architecture in `CLAUDE.md`; decisions in
 ## Where we are
 
 **All five phases are done and committed.** `dbt build` 184/184, `pytest`
-117/117. Extract → load → transform → marts → metric views → Metabase all run.
+117/117. Extract → load → transform → marts → metric views → Metabase all run
+**when invoked by hand**. Nothing runs unattended — see §3.
 
 | Piece | State |
 |---|---|
-| `extract/`, `load/`, `pipeline.py`, 5 ELT DAGs | done; scheduled 01:00 KST |
+| `extract/`, `load/`, `pipeline.py` | done |
 | dbt staging (10 views, allow-list + drift test) | done |
 | dbt marts — 6 dims, 5 facts, grain + FK tests | done |
 | Metric views — 7 `v_pi_*` + `v_bridge_pi_to_kpi` | done |
-| `transform_dbt_build` DAG | done; 02:00 KST, `--fail-fast` |
 | Metabase v0.63.5 + `bi_reader` + 3 dashboards | done, local |
+| Metabase FK metadata (14 cols) | done 2026-08-07, pushed from dbt |
 | PII inventory (Q-11) + cleanup | done; R-7/R-8 open |
+| 5 ELT DAGs + `transform_dbt_build` | **written; never run on a schedule** |
 | **Named owner (Q-04)** | **deferred — interim only** |
-
-Session ended because we went off the corporate network and the Azure
-warehouse became unreachable.
 
 ---
 
-## Blocked on corporate network access
+## Done 2026-08-07
 
-### 1. Finish the dbt-metabase sync — the FK metadata gap
+### 1. dbt-metabase FK sync — DONE
 
-**Why it matters:** Metabase infers joins from database foreign-key
-constraints. dbt creates none, so Metabase sees eleven unrelated tables and
-**cross-table filtering is unavailable in the query builder**. Measured today:
-**0 of 21 key columns carry FK metadata.**
+Metabase now carries **14 of 14** FK columns (was 0 of 21). Pushed with
+`dbt-metabase models`, which infers them from the native dbt `relationships`
+tests already declared in `marts.yml` — so the FK graph ships from git.
 
-`dbt-metabase` reads `dbt/target/manifest.json` and pushes descriptions and FK
-relationships into Metabase's Table Metadata over the API. It **infers foreign
-keys from native dbt `relationships` tests** — and all 14 of ours are already
-declared in `marts.yml`, so the FK graph is in git and only needs pushing.
+The `422 — Timed out after 10.0 s` on the pre-flight `sync_schema` was exactly
+what we thought: off-network, Metabase could not reach the Azure warehouse.
+On-network it succeeded first try, no `--sync-timeout 0` needed.
 
-Done: `dbt-metabase==1.7.5` added to the `transform` group (uncommitted — §5).
+**Acceptance test passed.** Question on `fct_user_disease_day` broken out by
+`dim_disease.phenotype_kor` *and* `dim_user.sex`, no SQL: 68 rows, headers
+rendered as `Disease → Phenotype Kor` (Metabase's implicit-join notation, which
+only appears when the FK graph is live).
 
-**Where it stopped:** the tool's pre-flight `POST /api/database/2/sync_schema`
-returned `422 — Timed out after 10.0 s`. Not a dbt-metabase bug: that call makes
-Metabase connect to the Azure warehouse, which fails off-network. Confirmed by
-calling the endpoint directly with both an API key and an admin session —
-identical timeout.
+Command, verification and the manual fallback are in `HOWTO.md` §3 Option A.
+Re-run it after any marts change. The API key used was deleted afterwards;
+the instance again has none.
 
-On-network:
+Minor thing to glance at, not a defect: every phenotype returns identical counts
+(2496 F / 2052 M), consistent with `fct_user_disease_day` carrying a row per
+user-day for *all* scored phenotypes. Worth confirming that is the intended
+grain.
 
-```bash
-source setup_env.sh
-uv run dbt parse --project-dir dbt --no-partial-parse    # refresh manifest.json
-# create a short-lived admin API key: Admin → Settings → Authentication → API keys
-uv run dbt-metabase models \
-  --manifest-path dbt/target/manifest.json \
-  --metabase-url http://localhost:3000 \
-  --metabase-api-key "$KEY" \
-  --metabase-database "Invites Loop DW (marts)" \
-  --include-schemas marts
-```
+### 2. `HOWTO.md` §3 Option A rewrite — DONE
 
-`--sync-timeout 0` skips the pre-flight sync if it still fails (the schema is
-already in sync, so that is safe).
+Leads with dbt-metabase; manual UI/API route kept as an explicit fallback; the
+14-row mapping table retained as a statement of what should exist, with a note
+that `marts.yml` wins if the two disagree. §2 Step 5 now points at the same
+command instead of the UI. API examples switched from `X-Metabase-Session` to
+`x-api-key`.
 
-**Verify** — should report 14, not 0:
+---
 
-```bash
-curl -s -H "X-Metabase-Session: $SESSION" http://localhost:3000/api/database/2/metadata \
- | python3 -c "import json,sys; print(sum(1 for t in json.load(sys.stdin)['tables'] for f in t['fields'] if f.get('semantic_type')=='type/FK'), 'FK columns')"
-```
+## Blocked — needs an owner decision, not code
 
-**Acceptance test** — the thing that prompted all this: build a question on
-`fct_user_disease_day` and filter by `dim_disease.phenotype_kor` **and**
-`dim_user.sex` at once, without writing SQL.
+### 3. Nothing is actually scheduled
 
-Delete the API key afterwards (none exist in the instance right now).
+Checked 2026-08-07. The DAGs are written and committed, but **no scheduled run
+has ever occurred, and none can**:
 
-### 2. Rewrite `HOWTO.md` §3 Option A
+- No Airflow scheduler process is running, and none is deployed anywhere.
+- The metadata DB (`~/airflow/airflow.db`, SQLite) has not been written since
+  **2026-07-30 17:18**.
+- All five ELT DAGs are **paused** (`is_paused=1`).
+- `transform_dbt_build` is **not registered at all** — added in `e537c25`, after
+  the last DAG-parse, so Airflow has never seen it.
+- Total DAG-run history: one manual `elt_irs_to_staging` on 2026-07-30.
 
-It documents the manual UI/API route for the 14 FK relationships. Once
-dbt-metabase is proven, lead with it and keep the manual route as fallback —
-the mapping table stays useful as a statement of what should exist. The point
-worth recording: FK metadata then lives in `marts.yml` and ships from git,
-rather than as undocumented clicks in a UI.
+So `schedule="0 1 * * *"` in `elt_to_staging.py:39` is a declaration, not a
+behaviour. Every load and `dbt build` so far has been a manual CLI invocation,
+and the marts are only as fresh as the last time someone ran one.
 
-### 3. Confirm the first scheduled DAG runs
+This is **Q-13 (production hosting) arriving early** — it was deferred on the
+grounds that everything is hosting-independent, which remains true, but the
+consequence is that unattended operation does not exist. Decide the target
+(a always-on host? managed Airflow? cron calling the CLI?) before treating any
+dashboard number as current.
 
-Schedules were set today and have not fired yet (ELT 01:00 KST,
-`transform_dbt_build` 02:00 KST). Check the first runs succeeded and
-`dbt source freshness` is clean — several sources will WARN until the DAGs have
-actually run on schedule.
+Cheap interim if a decision is not imminent: run the scheduler locally and
+unpause, accepting that it only runs when the laptop is awake and on-network.
+Better than the current state mainly because failures become visible.
 
 ---
 
@@ -121,11 +118,10 @@ instance-wide, including admins)? Restrict write scopes? Note it is
 **unverified** whether an admin can cap the grantable scope set per client —
 test before relying on scopes as enforcement. Detail in `HOWTO.md` §1.
 
-### 5. Commit or back out the dbt-metabase dependency
+### 5. dbt-metabase dependency — DONE
 
-`pyproject.toml` and `uv.lock` are modified but uncommitted on purpose — the
-tool is not yet proven here. Commit once §1 succeeds, or
-`git checkout pyproject.toml uv.lock` to drop it.
+Committed as `d3dd7fb` (`dbt-metabase>=1.7.5` in the `transform` group). The
+tool is now proven here; see §1.
 
 ### 6. Carried-forward open items
 
@@ -140,7 +136,7 @@ tool is not yet proven here. Commit once §1 succeeds, or
 | Unmapped cohort users | 2 active members with no iccoli link — owner follow-up |
 | Metabase upgrade cadence | v0.63 EOL **2026-09-07**; non-LTS gets ~2 months. Put it on a calendar |
 | Q-03 existing BI tool | Never answered; would only have changed Phase 4 |
-| Q-13 production hosting | Deliberately deferred; everything is hosting-independent |
+| Q-13 production hosting | No longer harmless to defer — it is what blocks §3 (nothing is scheduled) |
 
 ---
 
@@ -183,7 +179,13 @@ tool is not yet proven here. Commit once §1 succeeds, or
 - MCP server registered with Claude Code at **local scope**
   (`~/.claude.json`, this project only), OAuth authorised as admin. MCP tools
   load at session start — start a fresh session to use them.
-- All test API keys deleted; probe collection archived. No API keys currently
-  exist in the instance.
+- All test API keys deleted; probe collection archived. The admin key minted
+  2026-08-07 for the FK sync was deleted immediately after (verified: the API
+  now returns 401). No API keys currently exist in the instance.
+- Local stack sizing changed 2026-08-07: Colima VM 4 CPU / 8 GiB → **2 CPU /
+  4 GiB**, and `JAVA_OPTS` 3g → **2g** in both `.env` and `docker-compose.yml`
+  in `invites-loop-bi-deploy` (uncommitted there; `.env.bak.20260807` kept).
+  The heap cap had to come down with the VM — `-Xmx3g` inside a 4 GiB VM is the
+  documented exit-137 trap. Measured after: 1.26 GiB of 3.81 GiB, 0 restarts.
 - Last verified backup restore: 2026-08-06 post-upgrade — 178 tables,
   5 dashboards, 11 questions, 5 permission groups into a scratch container.
