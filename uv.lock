@@ -935,6 +935,21 @@ wheels = [
 ]
 
 [[package]]
+name = "dbt-metabase"
+version = "1.7.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "rich" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/e6/430cc27aff7613390cd31e2cae929082a009ed7267a387b6e522801f10b7/dbt_metabase-1.7.5.tar.gz", hash = "sha256:558ff77538745113737445e7631a55bc30a04c649e0a231ed7780b6d2a4e174e", size = 847511, upload-time = "2026-05-06T04:30:37.797Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/58/f0608a86ef23ed436be713d41c523499044ee929375a1d2e6fa38af631c1/dbt_metabase-1.7.5-py3-none-any.whl", hash = "sha256:8c5852dbb2f2598107eb6d5239a5d3d8265aadd07827014e7e5600b368cbb56b", size = 30439, upload-time = "2026-05-06T04:30:36.046Z" },
+]
+
+[[package]]
 name = "dbt-postgres"
 version = "1.9.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1423,6 +1438,7 @@ dev = [
 ]
 transform = [
     { name = "dbt-core" },
+    { name = "dbt-metabase" },
     { name = "dbt-postgres" },
 ]
 
@@ -1446,6 +1462,7 @@ dev = [
 ]
 transform = [
     { name = "dbt-core", specifier = "~=1.10.0" },
+    { name = "dbt-metabase", specifier = ">=1.7.5" },
     { name = "dbt-postgres", specifier = "~=1.9.0" },
 ]
 
