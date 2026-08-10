@@ -15,6 +15,13 @@ models:
       - name: user_id
         data_tests: [not_null, unique]
       - name: site_id
+        description: >-
+          NOT A REAL AFFILIATION — a hardcoded constant, identical for all 404 users.
+          Do not group, filter or segment by it; it tells you nothing. Real per-user site
+          links exist in stg_ichms.auth_user_customer (all 404 resolve to ULSAN) but are
+          deliberately not read here, because affiliation is many-to-many — one person can
+          be in Ulsan and also in Jeju — and a single column cannot hold that. See CLAUDE.md
+          "Site affiliation is multi-valued".
         data_tests:
           - not_null
           - relationships:
@@ -46,7 +53,12 @@ models:
         data_tests: [not_null]
 
   - name: dim_deployment_site
-    description: One row today (placeholder code — see the model header). Exists so "which site" is expressible before multi-site is real.
+    description: >-
+      One row, a placeholder code — see the model header. Multi-site is no longer
+      hypothetical: ichms.auth_customer already holds 울산 and 제주, and a person can hold
+      both at once. This dim is not yet sourced from it because that table mixes deployment
+      sites with application tenants (LIS, 아이콜리, iCHMS Web), and classifying them is an
+      owner rule. See CLAUDE.md "Site affiliation is multi-valued".
     columns:
       - name: site_id
         data_tests: [not_null, unique]

@@ -67,6 +67,91 @@ def test_overlap_widens_the_lower_bound():
 	assert plan.params == (WATERMARK - timedelta(minutes=5),)
 
 
+def test_a_targets_lookback_days_widens_the_window():
+	"""
+	`lookback_days` is how a table with a backdating source (the discovery wearable
+	streams) recovers rows that arrive stamped below the watermark.
+	"""
+	extractor = build_extractor(
+		None,
+		source_system="discovery",
+		target={
+			"schema_name": "public",
+			"table_name": "tb_demo",
+			"watermark_col": "update_datetime",
+			"lookback_days": 30,
+		},
+		watermark_manager=StubWatermarkManager(WATERMARK),
+	)
+	extractor._source_table = table_schema()
+	assert extractor.overlap == timedelta(days=30)
+	assert extractor.plan().params == (WATERMARK - timedelta(days=30),)
+
+
+def test_the_delete_window_matches_the_widened_read_window():
+	"""
+	The 15 keyless tables stay idempotent by deleting exactly the window they are
+	about to insert, replaying `plan.predicate` with `plan.params` against staging.
+	A lookback that widened the read but not the predicate would leave the original
+	copies of the re-read rows behind and double every one of them.
+	"""
+	extractor = build_extractor(
+		None,
+		source_system="discovery",
+		target={
+			"schema_name": "public",
+			"table_name": "tb_demo",
+			"watermark_col": "update_datetime",
+			"lookback_days": 30,
+		},
+		watermark_manager=StubWatermarkManager(WATERMARK),
+	)
+	extractor._source_table = table_schema()
+	plan = extractor.plan()
+	assert plan.predicate is not None
+	assert plan.predicate in plan.query, "the delete window must be the read window"
+	assert plan.params == (WATERMARK - timedelta(days=30),)
+
+
+def test_a_declared_lookback_is_never_narrowed_by_the_run_level_overlap():
+	"""
+	`--overlap-minutes` means "re-read at least this much"; a table's own lookback
+	is a correctness requirement. The wider of the two wins in both directions.
+	"""
+	target = {
+		"schema_name": "public",
+		"table_name": "tb_demo",
+		"watermark_col": "update_datetime",
+		"lookback_days": 30,
+	}
+	narrower = build_extractor(
+		None, source_system="discovery", target=target, overlap=timedelta(minutes=5),
+		watermark_manager=StubWatermarkManager(WATERMARK),
+	)
+	assert narrower.overlap == timedelta(days=30), "an operator's 5 minutes must not shrink a declared 30 days"
+
+	wider = build_extractor(
+		None, source_system="discovery", target=target, overlap=timedelta(days=90),
+		watermark_manager=StubWatermarkManager(WATERMARK),
+	)
+	assert wider.overlap == timedelta(days=90), "an operator asking for more must still get it"
+
+
+def test_a_target_without_a_lookback_keeps_the_run_level_overlap():
+	extractor = build_extractor(
+		None,
+		source_system="discovery",
+		target={
+			"schema_name": "public",
+			"table_name": "tb_demo",
+			"watermark_col": "update_datetime",
+		},
+		overlap=timedelta(minutes=5),
+		watermark_manager=StubWatermarkManager(WATERMARK),
+	)
+	assert extractor.overlap == timedelta(minutes=5)
+
+
 def test_upper_bound_is_optional_and_additive():
 	upper = datetime(2026, 2, 1, tzinfo=timezone.utc)
 	plan = make_extractor(watermark=WATERMARK).plan(upper_bound=upper)

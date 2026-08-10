@@ -20,10 +20,20 @@ every entry so downstream code (the extractors) can rely on a fixed shape:
 		"fallback_watermark_col": "create_datetime" | None,
 		"exclude_columns":        ("meal_data",),   # never read, staged or stored
 		"row_filter":             "user_no IN (...)" | None,
+		"lookback_days":          30 | None,       # re-read this far below the watermark
 	}
 
 `exclude_columns` is optional and exists for payload columns that dwarf the rest
 of a table; see `disc_lifelog_user_meal` in `discovery_targets.py`.
+
+`lookback_days` widens the incremental window *downwards*, re-reading rows that
+sit below the last watermark. It exists for sources that write rows with a
+**backdated** watermark -- wearables sync late, so a watch uploads samples
+stamped days ago -- which a plain `watermark_expr > last_watermark` predicate can
+never see again. Replay is safe: the loader upserts on the primary key, or (for
+the keyless tables) deletes exactly the window it is about to insert, reusing
+this same widened predicate. Cost is a wider read every run, so it is declared
+per table rather than switched on globally.
 
 `row_filter` is an optional SQL predicate evaluated **in the source database**;
 rows that do not match never leave the source system. It exists for data
@@ -94,6 +104,21 @@ def _normalise(source_system: str, target: dict, load_type: str) -> dict:
 			f"but declares no 'watermark_col'"
 		)
 
+	lookback_days = target.get("lookback_days")
+	if lookback_days is not None:
+		if not isinstance(lookback_days, int | float) or isinstance(lookback_days, bool) or lookback_days < 0:
+			raise ValueError(
+				f"[{source_system}] {target['schema_name']}.{target['table_name']} declares "
+				f"'lookback_days'={lookback_days!r}; it must be a non-negative number of days"
+			)
+		# A full refresh already re-reads everything, so a lookback is a no-op there.
+		# Silently ignoring it would hide a config mistake.
+		if target.get("load_type", load_type) == LOAD_TYPE_FULL_REFRESH:
+			raise ValueError(
+				f"[{source_system}] {target['schema_name']}.{target['table_name']} is full_refresh "
+				f"but declares 'lookback_days'; the whole table is read on every run already"
+			)
+
 	return {
 		"source_system": source_system,
 		"schema_name": target["schema_name"],
@@ -103,6 +128,7 @@ def _normalise(source_system: str, target: dict, load_type: str) -> dict:
 		"fallback_watermark_col": target.get("fallback_watermark_col"),
 		"exclude_columns": tuple(target.get("exclude_columns") or ()),
 		"row_filter": target.get("row_filter") or None,
+		"lookback_days": lookback_days,
 	}
 
 

@@ -60,7 +60,19 @@ app_account as (
 
 select
 	c.user_id,
-	-- Single site until a source system carries one; see dim_deployment_site.
+	-- A HARDCODED LITERAL, and known to be the wrong shape (corrected
+	-- 2026-08-10). This used to read "single site until a source system carries
+	-- one" — but ichms.auth_user_customer already carries per-user site links,
+	-- already landed in stg_ichms, and all 404 users here resolve to ULSAN
+	-- through it. It is not read because affiliation is many-to-many: the owner
+	-- needs "was in Ulsan and is now ALSO in Jeju", which a scalar cannot hold
+	-- and which SCD Type 1 (D-08) would resolve by overwriting — silently
+	-- re-attributing every historical fact for that user.
+	--
+	-- Replacing this with a real value is NOT the fix; it would encode the same
+	-- one-value assumption with better provenance. The fix is a bridge at
+	-- (user_id, site_id, valid_from, valid_to), leaving this dim at one row per
+	-- user. See CLAUDE.md § "Site affiliation is multi-valued" and todo.md B0.
 	'KR_LOOP_PILOT' as site_id,
 	c.sex,
 	-- 400 of 404 cohort users have a birth year (the 4 without are the 2

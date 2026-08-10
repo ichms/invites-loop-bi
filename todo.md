@@ -11,7 +11,7 @@ Last updated: **2026-08-07**. Architecture in `CLAUDE.md`; decisions in
 ## Where we are
 
 **All five phases are done and committed.** `dbt build` **211/211**, `pytest`
-117/117. Extract → load → transform → marts → metric views → Metabase all run
+**125/125**. Extract → load → transform → marts → metric views → Metabase all run
 **when invoked by hand**. Nothing runs unattended — see §3.
 
 | Piece | State |
@@ -22,7 +22,8 @@ Last updated: **2026-08-07**. Architecture in `CLAUDE.md`; decisions in
 | Metric views — 7 `v_pi_*` + `v_bridge_pi_to_kpi` | done |
 | Metabase v0.63.5 + `bi_reader` + 3 dashboards | done, local |
 | Metabase FK metadata (14 cols) | done 2026-08-07, pushed from dbt |
-| **`fct_user_day` as a behavioural panel** | **done 2026-08-07 — dense spine, 74,410 rows** |
+| **`fct_user_day` as a behavioural panel** | **done 2026-08-07 — dense spine; 76,026 rows @ 08-10** |
+| Wearable retroactive-data loss (A′) | **found + fixed + backfilled 2026-08-10** |
 | PII inventory (Q-11) + cleanup | done; R-7/R-8 open |
 | 5 ELT DAGs + `transform_dbt_build` | **written; never run on a schedule** |
 | **BI viewer choice** | **reopened 2026-08-07 — see Frame 4** |
@@ -215,7 +216,7 @@ bounds safe to change. **Do not delete it when editing the spine.**
 | Meal users / records | 335 | **335 / 37,374 — exact, zero loss** |
 | §4.5 routine completion @ 16+ login days | 65–72% | **71.6%** |
 | §4.5 gradient across buckets | ~3× | 7.0% → 22.4% → **71.6%** |
-| Wearable users @ 2026-07-31 | 167 | **177 — UNRECONCILED** |
+| Wearable users @ 2026-07-31 | 167 | 177 → **181 after the 08-10 backfill; reconciled, panel is right** |
 
 The dominant-variable finding reproduces. The low buckets read lower than the
 document because this pools completions/deliveries where the source averaged
@@ -225,18 +226,118 @@ comparable; do not quote them side by side.**
 
 ---
 
+## Done 2026-08-10
+
+### A. Wearable count reconciled — the panel's 177 is correct
+
+The documented 167 is **a stale snapshot, not a target**. Same union, same
+cutoff; the difference is extraction date, because this data grows backwards.
+
+**Proof by monotonicity, which needs no reconstruction of the old query.** C3
+worked over the ~442 LOOP-mapped set; `dim_user` is 404, of which **402 are
+inside that mapped set** (the other 2 are the known unmapped pair below). Same
+definition and same cutoff over a *superset* of users must yield a count ≥ ours.
+The doc got 167 against our 177. At most 2 users can be blamed on scope, so ≥8
+of the gap cannot be — the data itself differs.
+
+Confirmed directly: at 2026-07-31 the count rises monotonically with how
+recently the data was pulled — **167** (doc) → **177** (panel, in-cohort) →
+**181** (our staging, unrestricted) → **185** (source today, step alone).
+
+Both candidate causes in the old item A were wrong. It is not **cohort scope** —
+that pushes the count *down* by 4, the wrong direction. It is not a
+**stream-filter difference** — C3's 167 is the same five-way union this model
+already implements. The real cause is the retroactive backfill in **A′**, which
+is why closing A opened a defect instead.
+
+**Consequence:** `wearable_streams_active` is sound and can be used. But no
+wearable count is a constant — always quote it with its extraction date. Do not
+"fix" the model to reproduce 167.
+
+**Worth an owner decision, separately:** step alone determines the union — every
+user with any stream has step (186 of 186 unrestricted; zero exceptions). 44
+in-cohort users have step and *nothing else*, at well under half the day-density
+(median 38 wear days vs 95). Phones count steps without a watch and nothing in
+the data separates them. So "has a device" means "has step data", and that
+choice is the entire distance between **181** and **137** (union excluding
+step). Recorded in the model header.
+
+### A′. Wearable retroactive-data loss — found, fixed, backfilled
+
+Closing A did not close cleanly; it exposed a live pipeline defect.
+
+**The defect.** All five wearable streams watermark on the **measurement** time
+(`measured_dt`, `total_measure_end_dt`). Wearables sync late, so a watch uploads
+samples stamped days or weeks earlier. Those rows land *below* the watermark,
+where `measured_dt > last_watermark` can never see them. Not lag — permanent,
+silent loss. **No source table carries an insert timestamp** (checked), so
+watermarking on arrival time was not an option.
+
+`step` gave the clean measurement, its 2026-08-06 load being a single full read:
+**454 rows for dates ≤ 08-06 arrived after it**, reaching **29 days back**,
+decaying with age (75 on the load date, ~12–15/day for three weeks, 1–3 at
+26–29 days). Hence a 30-day window — measured, not guessed.
+
+**The fix.** New per-table `lookback_days` in the target config, wired through
+`build_extractor` as the extractor's existing `overlap`. Declared 30 days on
+step / activity / sleep / SpO₂. Correctness is free: those tables are already in
+`KNOWN_MISSING_PRIMARY_KEY`, so the loader does delete-window-then-insert, and
+the delete window is built from the same widened bound — a test pins that.
+An operator's `--overlap-minutes` can widen a declared lookback but never narrow
+it. **Heartrate deliberately excluded**: 8.5M rows, no usable index, and step is
+a strict superset of the wearable user set, so it recovers nobody.
+
+**Backfilled and verified.** Ran the four streams; at the 2026-07-31 cutoff the
+warehouse now equals the source exactly — step 186/186, activity 135/135, sleep
+123/123, SpO₂ 119/119. Heartrate remains 133 vs 135, by design. `dbt build`
+**211/211**, `pytest` **125/125** (8 new). `fct_user_day` 74,410 → **76,026**
+rows, frontier now 2026-08-10, wearable users at 07-31 **177 → 181**.
+
+**The trap this ran into, now documented in the config.** Loading a lifelog
+child without its parent orphans rows *silently*. Refreshing four streams to
+08-10 against a `disc_lifelog_user_info` frozen at 08-06 left **4,651
+unattributable step rows** and drove the wearable count **down to 169 while the
+row count went up** — every dbt test still green, because an unmatched
+`user_lifelog_sn` is dropped by an inner join, not flagged. A whole-system run
+is safe; a hand-run `--table` on any child needs the parent run straight after.
+A per-channel source-vs-warehouse count is the only thing that catches it.
+
+---
+
 ## Start here next session
 
-In order. The first three continue Frame 2 and are pure code; the fourth is the
-viewer spike from Frame 4 and should wait until they land.
+> **⛔ Data transfer is frozen** (owner, 2026-08-10) — no extraction or load runs
+> until the owner lifts it. Read-only SQL, `dbt build` and `pytest` are fine.
+> See the banner at the top of `CLAUDE.md`. Everything below is doable without
+> moving a single row: A0's inputs are already landed, and B reads `stg_sibc`.
 
-### A. Reconcile the wearable count — 177 vs the documented 167
+In order. B and B0 continue Frame 2 and are pure code; D is the viewer spike from
+Frame 4 and should wait until they land. **A and A′ both closed 2026-08-10 —
+see below.**
 
-Same cutoff date (2026-07-31), ten users apart. Two candidate causes, neither
-checked: **cohort scope** (§1 worked from the 442 LOOP-mapped set, `dim_user`
-is the 404 sibc cohort) or a **stream-filter difference** in what counts as a
-firing. Until this closes, `wearable_streams_active` should not be quoted
-against C3's 167. Meal reconciles exactly, so the join path itself is sound.
+### B0. Site affiliation is multi-valued — do this before B
+
+Owner raised 2026-08-10: *"this person was in Ulsan and is now also in Jeju"* —
+one person, two affiliations, one field.
+
+The full analysis is in `CLAUDE.md` § "Site affiliation is multi-valued". The
+headline is that the constraint is **ours, not the source's**:
+`ichms.auth_user_customer` is already a temporal bridge (surrogate PK, no unique
+on `user_id`, `linked_dt` / `unlinked_dt`), both tables are **already landed in
+`stg_ichms`**, and all 404 `dim_user` users join to it and resolve to ULSAN.
+Meanwhile `dim_user.site_id` is a hardcoded `'KR_LOOP_PILOT'` literal with no
+source at all, and `dim_deployment_site`'s header carries a forward-compat claim
+that is now known to be false.
+
+**It sequences before B** because B adds "cohort group — Ulsan participant vs
+internal staff", which is *the same axis*. Building that as a single-valued
+column and then discovering affiliation is many-to-many means tearing it out.
+Decide the cardinality once, then build both on it.
+
+Open owner questions, none of which code can settle: which `auth_customer` rows
+are sites rather than app tenants; whether overlapping active links mean "moved"
+or "both" (only 10 of 1,113 rows ever set `unlinked_dt`, so today the data
+cannot tell); and the reporting rule for a dual-affiliated user's facts.
 
 ### B. Extend `dim_user` — the segment attributes Frame 2 needs
 
@@ -260,6 +361,14 @@ Still missing, and §1/§2 both turn on them:
 descriptions carry the denominator and control-variable warnings. Needs a fresh
 admin API key and one `dbt-metabase` run — `HOWTO.md` §3 Option A. Delete the
 key afterwards.
+
+Since 2026-08-10 this also carries the **`dim_user.site_id` warning** ("NOT A
+REAL AFFILIATION — a hardcoded constant, identical for all 404 users"). That one
+matters more than the rest: the column looks like a real segment in the GUI and
+has a live FK to `dim_deployment_site`, so a non-SQL user can group by it and get
+a confident, meaningless answer. Descriptions travel via the dbt manifest, not
+database comments (`persist_docs` is not configured), so they only appear in
+Metabase after this push.
 
 ### D. Then, and only then, spike Lightdash
 

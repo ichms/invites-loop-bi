@@ -336,9 +336,24 @@ class IncrementalExtractor(BaseExtractor):
 	then runs on `COALESCE(update_datetime, create_datetime)`, so freshly created
 	rows are not missed and updated rows come back again.
 
-	`overlap` re-reads a safety window below the last watermark, for tables where
-	rows can commit out of watermark order (long running transactions).  The
-	loader upserts on the primary key, so replayed rows are harmless.
+	`overlap` re-reads a safety window below the last watermark.  Two distinct
+	reasons to want one:
+
+	* rows can commit out of watermark order (long running transactions), or
+	* the source writes rows with a **backdated** watermark.  The discovery
+		wearable streams do exactly this -- a watch that has not synced for a
+		fortnight uploads samples stamped a fortnight ago -- and those rows land
+		below the watermark, where `watermark_expr > last_watermark` can never see
+		them again.  Measured 2026-08-10: 454 step rows arrived after a full read,
+		reaching 29 days back.  That is silent, permanent loss, not lag.
+
+	Replay is harmless either way: the loader upserts on the primary key, and for
+	the tables that have none it deletes exactly the window it is about to insert,
+	reusing `ExtractionPlan.predicate` -- which is built from the same widened
+	bound, so the delete window always matches the read window.
+
+	Per table, declare it as `lookback_days` in the config; `overlap` here is the
+	run-level floor (the CLI's `--overlap-minutes`).
 	"""
 
 	load_type = LOAD_TYPE_INCREMENTAL
@@ -523,11 +538,18 @@ def build_extractor(
 	if load_type != LOAD_TYPE_INCREMENTAL:
 		raise ValueError(f"Unknown load_type {load_type!r} for {target['schema_name']}.{target['table_name']}")
 
+	# A table's declared `lookback_days` is a correctness requirement (the source
+	# backdates its watermark), while the run-level `overlap` is an operator's
+	# "re-read a bit extra". Take the wider of the two: an operator asking for a
+	# safety window must never silently narrow a declared one.
+	lookback_days = target.get("lookback_days")
+	table_overlap = overlap if lookback_days is None else max(overlap, timedelta(days=lookback_days))
+
 	return IncrementalExtractor(
 		**common,
 		watermark_col=target["watermark_col"],
 		fallback_watermark_col=target.get("fallback_watermark_col"),
-		overlap=overlap,
+		overlap=table_overlap,
 	)
 
 

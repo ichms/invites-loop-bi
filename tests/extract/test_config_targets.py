@@ -20,6 +20,7 @@ REQUIRED_KEYS = {
 	"fallback_watermark_col",
 	"exclude_columns",
 	"row_filter",
+	"lookback_days",
 }
 
 
@@ -177,6 +178,82 @@ def test_the_lifelog_transaction_table_is_extracted_without_its_raw_payload():
 	assert "lifelog_raw_data" in set(targets["disc_lifelog_user_info"]["exclude_columns"]), (
 		"lifelog_raw_data is the entire 23 GB; it is redundant with the typed child tables"
 	)
+
+
+def test_the_wearable_streams_re_read_a_backfill_window():
+	"""
+	Wearables backdate: a watch that has not synced for a fortnight uploads samples
+	stamped a fortnight ago, which land *below* the watermark where
+	`measured_dt > last_watermark` can never see them again. Measured 2026-08-10:
+	454 step rows arrived after a full read, reaching 29 days back, and the
+	warehouse was short 4 users on step / 3 on activity / 2 on heartrate / 1 on
+	sleep against the source at an identical cutoff.
+
+	Losing these is silent -- every grain and not_null test still passes -- so the
+	guard lives here rather than in dbt.
+	"""
+	from invites_loop_bi.config.discovery_targets import WEARABLE_BACKFILL_LOOKBACK_DAYS
+
+	targets = {t["table_name"]: t for t in get_extraction_targets("discovery")}
+	for table in (
+		"disc_lifelog_user_step",
+		"disc_lifelog_user_activity",
+		"disc_lifelog_user_sleep",
+		"disc_lifelog_user_oxygen_saturation",
+	):
+		assert targets[table]["lookback_days"] == WEARABLE_BACKFILL_LOOKBACK_DAYS, table
+
+	# Heartrate is left out ON PURPOSE: 8.5M rows, no usable index on measured_dt,
+	# and step is a strict superset of the wearable user set, so it recovers no
+	# user the others miss. If a mart ever needs heartrate intensity rather than
+	# presence, this assertion is the thing to revisit -- not to silently delete.
+	assert targets["disc_lifelog_user_heartrate"]["lookback_days"] is None
+
+
+def test_meal_needs_no_lookback_because_it_watermarks_on_arrival():
+	"""
+	The counter-example that scopes the defect. Meal watermarks on
+	COALESCE(upd_dt, ins_dt) -- when the row *arrived*, not when the meal was
+	eaten -- so a backdated record still comes in above the watermark. It
+	reconciled exactly (335 of 335 recorders) in the same audit that found the
+	wearable drift. Only measurement-time watermarks need a lookback.
+	"""
+	targets = {t["table_name"]: t for t in get_extraction_targets("discovery")}
+	assert targets["disc_lifelog_user_meal"]["lookback_days"] is None
+	assert targets["disc_lifelog_user_meal"]["watermark_col"] == "upd_dt"
+	assert targets["disc_lifelog_user_meal"]["fallback_watermark_col"] == "ins_dt"
+
+
+def test_lookback_defaults_to_none_and_rejects_nonsense():
+	assert _normalise("irs", {"schema_name": "s", "table_name": "t", "watermark_col": "w"}, LOAD_TYPE_INCREMENTAL)[
+		"lookback_days"
+	] is None
+
+	for bad in (-1, "30", True):
+		try:
+			_normalise(
+				"irs",
+				{"schema_name": "s", "table_name": "t", "watermark_col": "w", "lookback_days": bad},
+				LOAD_TYPE_INCREMENTAL,
+			)
+		except ValueError as exc:
+			assert "lookback_days" in str(exc)
+		else:
+			raise AssertionError(f"lookback_days={bad!r} should raise")
+
+
+def test_full_refresh_with_a_lookback_raises():
+	"""A full refresh already re-reads everything; a lookback there is a config slip."""
+	try:
+		_normalise(
+			"irs",
+			{"schema_name": "s", "table_name": "t", "load_type": LOAD_TYPE_FULL_REFRESH, "lookback_days": 30},
+			LOAD_TYPE_FULL_REFRESH,
+		)
+	except ValueError as exc:
+		assert "lookback_days" in str(exc)
+	else:
+		raise AssertionError("full_refresh + lookback_days should raise")
 
 
 def test_unknown_source_system_raises():

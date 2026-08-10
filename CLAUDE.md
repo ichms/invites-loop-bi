@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> ## ⛔ DATA TRANSFER IS FROZEN (owner directive, 2026-08-10)
+>
+> **Run no extraction or load until the owner lifts this.** No
+> `python -m invites_loop_bi.pipeline …` against any source system, no DAG runs,
+> no manual `COPY` from a source database. This covers everything that moves rows
+> from a source into `stg_*`.
+>
+> Still allowed: read-only `SELECT` against any database, `dbt build` (it only
+> reads `stg_*` and rewrites `staging` / `marts` inside the warehouse), and
+> `pytest` (its warehouse sessions roll back).
+>
+> If a task appears to need fresh data, say so and stop — do not run the pipeline
+> to unblock yourself.
+
 ## Overview
 
 `invites-loop-bi` is an OLAP **ELT pipeline** that extracts data from multiple operational
@@ -14,10 +28,14 @@ Python >= 3.13, managed with **uv**, `src/` layout.
 > all five landing schemas, staging views, allow-list seed + drift test, and the full star —
 > six dims and five facts (`fct_user_day`, `fct_user_disease_day`, `fct_measurement`,
 > `fct_coaching_event`, `fct_app_action`) with grain and FK tests. `dbt build` is 211/211
-> green; `pytest` 117/117. **`fct_user_day` is a dense behavioural panel** since 2026-08-07
-> (every user-day from the earlier of enrolment and first activity, ~74k rows) — the zero
+> green; `pytest` 125/125. **`fct_user_day` is a dense behavioural panel** since 2026-08-07
+> (every user-day from the earlier of enrolment and first activity, ~76k rows) — the zero
 > days are the denominator, and a reconciliation test asserts no activity falls outside the
-> spine. Read `todo.md` "The frames we now work under" before changing it. DAGs are
+> spine. Read `todo.md` "The frames we now work under" before changing it. **Wearable counts
+> are not constants** (2026-08-10): those streams watermark on measurement time and the
+> source backfills for ~30 days, so the count at a fixed cutoff rises with extraction date —
+> quote one only with its extraction date. Four streams carry a 30-day `lookback_days`;
+> see A′ in `todo.md`. DAGs are
 > **written but have never run on a schedule** — five ELT
 > DAGs declare 01:00 KST and `transform_dbt_build` 02:00 KST, but no scheduler is deployed,
 > all five ELT DAGs are paused, and `transform_dbt_build` has never been parsed. Every load
@@ -196,6 +214,64 @@ N-02): direct identifiers (CI/DI, names, phone, email, push/device tokens) are `
 `tb_ext_user_preinfo` is not a target, and user-keyed iccoli tables carry the cohort `row_filter`.
 `scripts/20260806_pii_cleanup.sql` retro-applied the policy to already-landed data. If a model
 needs a field that is excluded here, that is a policy conversation, not a config edit.
+
+### Site affiliation is multi-valued — the Jeju problem
+
+**The business need:** "this person was in Ulsan and is now *also* in Jeju." One
+person, two affiliations. Raised by the owner 2026-08-10 as "there is only one
+field but two values".
+
+**That premise is true of our warehouse and false of the source.** Measured
+2026-08-10 (read-only; both tables are already landed, so closing this needs no
+extraction):
+
+- **`ichms.auth_user_customer` is already a temporal bridge.** Surrogate PK
+  `user_customer_id`, **no unique constraint on `user_id`**, plus `linked_dt`
+  and a nullable `unlinked_dt`. Many rows per user is not an edge case — 503 of
+  581 users already carry more than one link, 501 of them simultaneously active.
+  The source can express Ulsan-and-Jeju today, unchanged.
+- **`dim_user.site_id` is a hardcoded string literal**, `'KR_LOOP_PILOT'`, on
+  every row. It has no source at all. *That* is the single field with a single
+  value, and it is ours.
+- `dim_deployment_site`'s header claims Jeju "arrive[s] as rows here and as a
+  populated `dim_user.site_id` — no restructuring." **That claim is wrong.** A
+  scalar `site_id` cannot hold two values, and `dim_user` is SCD Type 1 (D-08),
+  so writing Jeju over Ulsan would silently re-attribute every historical fact
+  for that user. Correct the header when this is fixed.
+
+Current state: all 404 `dim_user` users join cleanly to `auth_user_customer`,
+and **all 404 resolve to ULSAN**. JEJU exists as a customer with 14 linked users,
+**none of them in `dim_user`** — the cohort is the 404 sibc users, so Jeju
+arriving for real also reopens the population question.
+
+**The shape of the fix:** a bridge mart at
+`(user_id, site_id, valid_from, valid_to)` sourced from `auth_user_customer`,
+with `dim_user` keeping one row per user and *losing* its literal `site_id`
+(or keeping it only as an explicitly-defined primary/reporting site). Do not put
+site on `fct_user_day`'s grain — it is user × day, and user × day × site
+double-counts every metric for a dual-affiliated user.
+
+**Four things that bite, and are not solved by the bridge:**
+
+1. **`auth_customer` conflates regions with application tenants.** Its seven rows
+   are 울산 and 제주 *and* LIS, 아이콜리, iCHMS Operator/Expert/Customer Web. Built
+   naively, `dim_deployment_site` would list "LIS" as a deployment site. Which
+   customers are sites needs an owner rule, not inference.
+2. **The data cannot currently distinguish "moved" from "both".** Only 10 of
+   1,113 link rows have `unlinked_dt` set, so a relocation and a dual affiliation
+   both appear as two open links. No modelling fixes that — it is a process gap
+   upstream, and it decides whether overlapping active links are legal.
+3. **Denominators stop being disjoint.** Once anyone is in both, "Ulsan users +
+   Jeju users" double-counts people. Same failure class as the §5.2 denominator
+   artifact in `todo.md` Frame 3.
+4. **Metabase implicit joins cannot traverse a temporal bridge.** The FK graph
+   pushed 2026-08-07 resolves single-column FKs. A GUI filter on site needs a
+   view that resolves the as-of rule, or non-SQL users get wrong answers with no
+   indication anything happened.
+
+Minor: JEJU's earliest `linked_dt` (2025-11-27) predates its `auth_customer`
+row (`created_dt` 2026-06-22). Check that before trusting `linked_dt` as a true
+affiliation start.
 
 ## Testing
 
