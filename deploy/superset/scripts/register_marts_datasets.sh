@@ -5,8 +5,8 @@
 #   ./scripts/register_marts_datasets.sh
 #
 # Idempotent: relations that already have a dataset are skipped. New dbt
-# models need this re-run (or a click in the UI) — datasets are Superset
-# objects, unlike Metabase's automatic schema sync.
+# models need this re-run (or a click in the UI) — Superset does not
+# schema-sync; datasets are explicit objects.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source .env

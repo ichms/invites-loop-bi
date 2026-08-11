@@ -5,7 +5,7 @@
 --
 -- MATERIALIZED AS A TABLE, unlike every other staging model. `heartrate` alone
 -- is ~8.5M sample rows; as a view this would re-scan on every downstream query
--- and every Metabase card. It collapses to a few thousand user-days, so the
+-- and every Superset chart. It collapses to a few thousand user-days, so the
 -- table is small even though its input is not.
 --
 -- STREAM UNION, not one stream: DASHBOARD_METRIC_FEEDBACK C3 settled the

@@ -1,5 +1,4 @@
-# Superset configuration — the counterpart of the MB_* environment block in
-# the Metabase compose file. Superset takes a Python module, not env vars;
+# Superset configuration. Superset takes a Python module, not env vars;
 # this file is mounted read-only into the containers and pointed at by
 # SUPERSET_CONFIG_PATH.
 
@@ -9,7 +8,7 @@ import os
 SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
 
 # Application database (dashboards, charts, users, warehouse credentials).
-# Never SQLite — same reasoning as Metabase's D-13 "never H2".
+# Never the SQLite default (D-13): real data belongs in a real database.
 SQLALCHEMY_DATABASE_URI = (
 	"postgresql+psycopg2://{user}:{pw}@superset-app-db:5432/{db}".format(
 		user=os.environ.get("SS_DB_USER", "superset"),
@@ -19,7 +18,7 @@ SQLALCHEMY_DATABASE_URI = (
 )
 
 # --- correctness, not cosmetics -------------------------------------------
-# There is NO Superset equivalent of MB_REPORT_TIMEZONE (D-18). Time grains
+# Superset has no report-timezone setting (D-18). Time grains
 # compile to date_trunc() in the warehouse session, so KST is enforced where
 # it belongs: `ALTER ROLE superset_reader SET timezone = 'Asia/Seoul'` in
 # sql/01_superset_reader_role.sql. Nothing to configure here — recorded so
@@ -34,7 +33,7 @@ SUPERSET_WEBSERVER_TIMEOUT = 120
 ROW_LIMIT = 5000
 SQL_MAX_ROW = 100_000
 
-# Korean-first, like MB_SITE_LOCALE=ko.
+# Korean-first UI for the planning team.
 BABEL_DEFAULT_LOCALE = "ko"
 LANGUAGES = {
 	"ko": {"flag": "kr", "name": "Korean"},

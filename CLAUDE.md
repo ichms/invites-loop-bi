@@ -41,15 +41,15 @@ Python >= 3.13, managed with **uv**, `src/` layout.
 > all five ELT DAGs are paused, and `transform_dbt_build` has never been parsed. Every load
 > and `dbt build` to date was a manual CLI run; "who runs the scheduler" is Q-13, still open.
 > Metric views (`v_pi_*` / `v_bridge_*`) sit in
-> `dbt/models/marts/metrics/`. **All five phases are complete**; Metabase runs locally from
-> the sibling repo `invites-loop-bi-deploy` (compose stack, `bi_reader` role, backup/restore,
-> Korean runbook + metrics guide). The remaining open item is **Q-04, a named owner in
-> writing** — see `HANDOVER.md`. Modelling decisions live in
+> `dbt/models/marts/metrics/`. **All five phases are complete**; Superset runs locally from
+> `deploy/superset/` (pinned compose stack, `superset_reader` role, dataset registration and
+> the PI dashboard as code, Korean metrics guide). The remaining open item is **Q-04, a named
+> owner in writing** — see `HANDOVER.md`. Modelling decisions live in
 > `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` (which records where
 > measurement overrode the log — §3), and the Q-11 column classification in `PII_INVENTORY.md`
 > — read them before touching `dbt/`. Generated dbt documentation is committed at
-> `dbt/docs/dbt_docs.html`, and `HOWTO.md` covers extending the marts, Metabase
-> joins, and MCP restriction. `main.py` and `src/pipeline.py` are leftover empty stubs; the real
+> `dbt/docs/dbt_docs.html`, and `HOWTO.md` covers extending the marts, exposing
+> models to Superset, and MCP restriction. `main.py` and `src/pipeline.py` are leftover empty stubs; the real
 > entry point is `src/invites_loop_bi/pipeline.py`.
 
 ## Commands
@@ -264,10 +264,10 @@ double-counts every metric for a dual-affiliated user.
 3. **Denominators stop being disjoint.** Once anyone is in both, "Ulsan users +
    Jeju users" double-counts people. Same failure class as the §5.2 denominator
    artifact in `todo.md` Frame 3.
-4. **Metabase implicit joins cannot traverse a temporal bridge.** The FK graph
-   pushed 2026-08-07 resolves single-column FKs. A GUI filter on site needs a
-   view that resolves the as-of rule, or non-SQL users get wrong answers with no
-   indication anything happened.
+4. **A GUI filter cannot traverse a temporal bridge.** Superset datasets are
+   single relations; a chart filter on site needs a view — registered as a
+   dataset — that resolves the as-of rule, or non-SQL users get wrong answers
+   with no indication anything happened.
 
 Minor: JEJU's earliest `linked_dt` (2025-11-27) predates its `auth_customer`
 row (`created_dt` 2026-06-22). Check that before trusting `linked_dt` as a true

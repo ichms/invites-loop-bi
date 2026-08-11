@@ -1,7 +1,6 @@
 # Apache Superset + its application database.
 #
-# Deliberately the same shape as the Metabase stack in invites-loop-bi-deploy,
-# so the comparison is tool vs tool, not deployment vs deployment:
+# Three containers, and the distinction between them matters (D-13):
 #
 #   superset          the BI server. Stateless — everything it knows lives in
 #                     the app DB below.
@@ -12,18 +11,19 @@
 #                     admin user, and registers the warehouse connection.
 #                     Exits 0 and stays exited. Idempotent — safe on every up.
 #
-# The DATA WAREHOUSE is a third thing and is not in this file: Superset
-# connects to it as `superset_reader` (sql/01_superset_reader_role.sql).
-# Unlike Metabase OSS, the connection IS registered from config here
-# (bootstrap/init_superset.sh) — no UI step required. Score one for Superset.
+# The DATA WAREHOUSE is a third thing entirely and is not in this file: it is
+# an existing PostgreSQL server Superset connects to as `superset_reader`
+# (sql/01_superset_reader_role.sql). The connection is registered from config
+# (bootstrap/init_superset.sh) — no UI step required.
 #
-# Runs on a laptop with nothing but Docker (Colima). Ports: Superset on 8088,
-# so it can run alongside Metabase on 3000.
+# Platform-neutral on purpose (D-28/Q-13): this runs on a laptop with nothing
+# but Docker (Colima). When a production target is chosen it arrives as a
+# compose override — not as a rewrite of this file.
 
 services:
   superset-app-db:
-    # Matches the warehouse's major version, same reasoning as the Metabase
-    # stack: one Postgres idiom, identical pg_dump/psql behaviour.
+    # Matches the warehouse's major version, so pg_dump/psql behave identically
+    # in both places and there is one Postgres idiom to learn, not two.
     image: postgres:17-alpine
     container_name: superset-app-db
     restart: unless-stopped
@@ -45,13 +45,14 @@ services:
       - "5432"
 
   superset-init:
-    # PINNED exact version (same policy as Metabase, D-14): upgrades happen
-    # when someone chooses. Superset releases are slower-moving than current-
-    # line Metabase — 6.1.0 is the newest stable (2026-05). The image is built
-    # locally from ./Dockerfile because upstream ships without any DB driver;
-    # to bump: back up first, change the FROM tag in the Dockerfile,
-    # `docker-compose build && up -d`, watch the init logs for `superset db
-    # upgrade` migrations. No downgrades.
+    # PINNED exact version (D-14), never `:latest` — an unattended major
+    # upgrade on restart, with nobody around to fix a failed migration, is the
+    # single most common way one of these instances dies. Pinning means
+    # upgrades happen when someone chooses. 6.1.0 is the newest stable
+    # (2026-05). The image is built locally from ./Dockerfile because upstream
+    # ships without any DB driver; to bump: back up first, change the FROM tag
+    # in the Dockerfile, `docker-compose build && up -d`, watch the init logs
+    # for `superset db upgrade` migrations. No downgrades.
     build: .
     image: invites-superset:6.1.0
     container_name: superset-init
@@ -98,7 +99,8 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:8088/health || exit 1"]
       interval: 15s
       timeout: 10s
-      # Python cold start is faster than Metabase's JVM, but stay generous.
+      # Generous: a cold start on a laptop is slow, and a healthcheck that
+      # gives up early makes a working instance look broken.
       retries: 20
       start_period: 60s
 

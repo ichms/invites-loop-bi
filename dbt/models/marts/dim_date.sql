@@ -1,7 +1,7 @@
 -- Grain: one row per calendar day.
 --
 -- Generated, not sourced. Spans 2025-01-01 (the year the cohort data starts)
--- through the end of next year, so "this year"/"next month" filters in Metabase
+-- through the end of next year, so "this year"/"next month" filters in Superset
 -- always have rows to land on. Rebuilt on every dbt run, so the window rolls
 -- forward on its own.
 --

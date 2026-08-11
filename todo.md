@@ -1,6 +1,6 @@
 # TODO — pick up here
 
-Last updated: **2026-08-07**. Architecture in `CLAUDE.md`; decisions in
+Last updated: **2026-08-11**. Architecture in `CLAUDE.md`; decisions in
 `INVITES_LOOP_BI_DECISION_LOG.md`; what measurement overrode in
 `IMPLEMENTATION_PLAN.md` §3; handover state in `HANDOVER.md`.
 
@@ -11,7 +11,7 @@ Last updated: **2026-08-07**. Architecture in `CLAUDE.md`; decisions in
 ## Where we are
 
 **All five phases are done and committed.** `dbt build` **211/211**, `pytest`
-**125/125**. Extract → load → transform → marts → metric views → Metabase all run
+**125/125**. Extract → load → transform → marts → metric views → Superset all run
 **when invoked by hand**. Nothing runs unattended — see §3.
 
 | Piece | State |
@@ -20,13 +20,13 @@ Last updated: **2026-08-07**. Architecture in `CLAUDE.md`; decisions in
 | dbt staging (12 views, allow-list + drift test) | done |
 | dbt marts — 6 dims, 5 facts, grain + FK tests | done |
 | Metric views — 7 `v_pi_*` + `v_bridge_pi_to_kpi` | done |
-| Metabase v0.63.5 + `bi_reader` + 3 dashboards | done, local |
-| Metabase FK metadata (14 cols) | done 2026-08-07, pushed from dbt |
+| Superset 6.1.0 + `superset_reader` (`deploy/superset/`) | done 2026-08-11, local |
+| Superset datasets (19 marts relations) + PI dashboard as code | done 2026-08-11, scripted |
 | **`fct_user_day` as a behavioural panel** | **done 2026-08-07 — dense spine; 76,026 rows @ 08-10** |
 | Wearable retroactive-data loss (A′) | **found + fixed + backfilled 2026-08-10** |
 | PII inventory (Q-11) + cleanup | done; R-7/R-8 open |
 | 5 ELT DAGs + `transform_dbt_build` | **written; never run on a schedule** |
-| **BI viewer choice** | **reopened 2026-08-07 — see Frame 4** |
+| Superset Planning-Team role + backup drill | **open — see HANDOVER.md** |
 | **Named owner (Q-04)** | **deferred — interim only** |
 
 ---
@@ -88,87 +88,66 @@ verdict reversed once the denominator was stated.
 So: any fact backing behavioural analysis is dense by default, and the
 reconciliation test is not optional (see §7).
 
-### Frame 4 — The viewer decision is reopened, and two rejections were wrong
+### Frame 4 — The viewer is settled (Superset, D-11); what would reopen it
 
-`INVITES_LOOP_BI_DECISION_LOG.md` §4.1 rejected Superset and Lightdash. Both
-reasons have failed:
+The choice was made on the axes that actually discriminate — not analytical
+depth, which Frame 1 already ruled out as a differentiator:
 
-- **Superset — the stated reason is factually wrong.** The log says "four
-  moving parts: Redis, Celery workers, metadata DB, `superset_config.py`".
-  Redis and Celery are **not required**; they buy async queries, chart caching,
-  alerts/reports and thumbnails. Run synchronously and it is two containers —
-  parity with Metabase. Corrected in the log.
-- **Lightdash — the disqualifier expired.** The log rejected it because it
-  "requires a dbt project as an absolute dependency (**none exists today**)".
-  One exists now. The log also called it "**best governance fit of the four,
-  wrong constraint**"; the constraint changed, the fit did not.
+- **Content as code.** The warehouse connection, all 19 datasets, and the PI
+  dashboard are created by scripts in `deploy/superset/`. A rebuilt instance
+  is three commands from whole. This is the property the semantic-layer
+  principle (log line 39) wants from the viewer, and Superset gives it free.
+- **Row-level security exists, free**, for the day a second deployment site
+  needs row restriction (`dim_deployment_site` exists; `KR_LOOP_PILOT` is a
+  placeholder).
+- **The cost, named:** no implicit joins — every chart reads one dataset, so
+  cross-table questions need pre-joined wide models (`HOWTO.md` §3), and
+  Planning-Team GUI authoring is weaker than the alternatives. Korean UI
+  coverage (`BABEL_DEFAULT_LOCALE = ko`) is enabled but not yet exercised by a
+  real Planning-Team user.
 
-Still rejected, more firmly: **Redash** (SQL-only, structurally contradicts
-D-17; maintenance mode) and **Grafana** (observability tool — panel-per-query,
-no semantic layer, no ad-hoc multi-dimensional exploration).
+Still rejected, firmly: **Redash** (SQL-only, structurally contradicts D-17;
+maintenance mode) and **Grafana** (observability tool — panel-per-query, no
+semantic layer, no ad-hoc multi-dimensional exploration). The full rejection
+table is the log's §4.1.
 
-What actually separates the candidates now:
-
-| Axis | Metabase OSS | Lightdash | Superset |
-|---|---|---|---|
-| Non-dev GUI authoring | best | good | weakest |
-| Implicit FK joins | **yes** (built 2026-08-07) | dbt-defined | no — dataset-bound |
-| Dashboards as code | **no** (Pro only) | yes | yes (YAML) |
-| Row-level security | **no** (Pro only) | — verify | yes, free |
-| Audit logs | **no** (Pro only) | — verify | — |
-| Compliance upgrade path in-org | Pro | **SOC 2 / HIPAA / BAA** | none (vendor: Preset) |
-| Korean locale | solid (`ko`) | **verify** | **verify — likely partial** |
-| MCP | yes | **no on OSS** | — |
-
-The MCP gap matters less than it looks: agents already reach the warehouse
-directly via the `invites-loop-olap-connection` skill, and this session's
-finding was that Metabase MCP does **not** block write tools, which is a
-liability as much as a feature.
-
-**Triggers that would force the switch:** a second deployment site needing
-row-level restriction (`dim_deployment_site` exists, `KR_LOOP_PILOT` is a
-placeholder), or an audit-logging requirement for clinical/genomic data.
-
-**Recommended next step, not yet done:** spike Lightdash against the same
-acceptance test used for Metabase — filter `fct_user_disease_day` by
-`dim_disease.phenotype_kor` **and** `dim_user.sex` without SQL — and check
-Korean UI coverage. Do it *after* the marts work, per Frame 1.
+**Triggers that would reopen the choice:** the Planning Team failing to
+self-serve after the wide datasets and Korean UI land (Lightdash is the
+fallback — best governance fit, metric definitions as dbt YAML, and a
+commercial SOC 2 / HIPAA / BAA path that answers the Q-04 orphan risk), or an
+audit-logging requirement for clinical/genomic data. The acceptance test for
+any candidate: filter `fct_user_disease_day` by `dim_disease.phenotype_kor`
+**and** `dim_user.sex` without SQL, in Korean.
 
 ---
 
+## Done 2026-08-11
+
+### 1. Superset deployed, datasets registered, PI dashboard as code — DONE
+
+`deploy/superset/`: pinned 6.1.0 (one-line Dockerfile adds the missing
+psycopg2 driver), `postgres:17` app DB on a named volume, one-shot idempotent
+init (migrate → admin → warehouse connection via `set-database-uri`).
+`superset_reader` created and verified marts-only with KST at the role;
+all 19 marts relations registered as datasets
+(`scripts/register_marts_datasets.sh`); the PI dashboard — 8 charts, layout,
+and the METRICS.ko.md interpretation rules as an on-dashboard card — built by
+`scripts/build_pi_dashboard.py` and verified through the chart-data API
+(every query returns rows; SQL Lab shows `now()` at `+09`).
+
+Two findings worth keeping: SQL Lab ships a function denylist
+(`current_setting`, `version`, `pg_sleep`, … all blocked by default), and the
+one row-count worth spot-checking rendered right — `fct_user_day` 76,026.
+
+### 2. `HOWTO.md` rewritten around the dataset model — DONE
+
+§1 now covers AI-client restriction in terms of the DB role (the layer that
+enforces) vs Superset app roles (which do not protect data); §2 Step 5 is
+dataset registration; §3 explains the one-chart-one-dataset rule, keeps the
+14-row join map from `marts.yml` as the statement of legal joins, and orders
+the options: pre-join in dbt → virtual dataset → SQL Lab.
+
 ## Done 2026-08-07
-
-### 1. dbt-metabase FK sync — DONE
-
-Metabase now carries **14 of 14** FK columns (was 0 of 21). Pushed with
-`dbt-metabase models`, which infers them from the native dbt `relationships`
-tests already declared in `marts.yml` — so the FK graph ships from git.
-
-The `422 — Timed out after 10.0 s` on the pre-flight `sync_schema` was exactly
-what we thought: off-network, Metabase could not reach the Azure warehouse.
-On-network it succeeded first try, no `--sync-timeout 0` needed.
-
-**Acceptance test passed.** Question on `fct_user_disease_day` broken out by
-`dim_disease.phenotype_kor` *and* `dim_user.sex`, no SQL: 68 rows, headers
-rendered as `Disease → Phenotype Kor` (Metabase's implicit-join notation, which
-only appears when the FK graph is live).
-
-Command, verification and the manual fallback are in `HOWTO.md` §3 Option A.
-Re-run it after any marts change. The API key used was deleted afterwards;
-the instance again has none.
-
-Minor thing to glance at, not a defect: every phenotype returns identical counts
-(2496 F / 2052 M), consistent with `fct_user_disease_day` carrying a row per
-user-day for *all* scored phenotypes. Worth confirming that is the intended
-grain.
-
-### 2. `HOWTO.md` §3 Option A rewrite — DONE
-
-Leads with dbt-metabase; manual UI/API route kept as an explicit fallback; the
-14-row mapping table retained as a statement of what should exist, with a note
-that `marts.yml` wins if the two disagree. §2 Step 5 now points at the same
-command instead of the UI. API examples switched from `X-Metabase-Session` to
-`x-api-key`.
 
 ### 7. `fct_user_day` is now a behavioural panel — DONE
 
@@ -311,9 +290,8 @@ A per-channel source-vs-warehouse count is the only thing that catches it.
 > See the banner at the top of `CLAUDE.md`. Everything below is doable without
 > moving a single row: A0's inputs are already landed, and B reads `stg_sibc`.
 
-In order. B and B0 continue Frame 2 and are pure code; D is the viewer spike from
-Frame 4 and should wait until they land. **A and A′ both closed 2026-08-10 —
-see below.**
+In order. B and B0 continue Frame 2 and are pure code. **A and A′ both closed
+2026-08-10 — see below.**
 
 ### B0. Site affiliation is multi-valued — do this before B
 
@@ -355,24 +333,22 @@ Still missing, and §1/§2 both turn on them:
   (wearable ownership and routine completion run *inverse* across age; only 98
   users have both) is uncomputable without them.
 
-### C. Re-push metadata to Metabase
+### C. Push column descriptions into the Superset datasets
 
-`fct_user_day` gained ~11 columns that Metabase has never seen, and their
-descriptions carry the denominator and control-variable warnings. Needs a fresh
-admin API key and one `dbt-metabase` run — `HOWTO.md` §3 Option A. Delete the
-key afterwards.
+The dbt descriptions on `fct_user_day`'s panel columns carry the denominator
+and control-variable warnings, and since 2026-08-10 the **`dim_user.site_id`
+warning** ("NOT A REAL AFFILIATION — a hardcoded constant, identical for all
+404 users"). That one matters most: the column looks like a real segment in
+the GUI, so a non-SQL user can group by it and get a confident, meaningless
+answer.
 
-Since 2026-08-10 this also carries the **`dim_user.site_id` warning** ("NOT A
-REAL AFFILIATION — a hardcoded constant, identical for all 404 users"). That one
-matters more than the rest: the column looks like a real segment in the GUI and
-has a live FK to `dim_deployment_site`, so a non-SQL user can group by it and get
-a confident, meaningless answer. Descriptions travel via the dbt manifest, not
-database comments (`persist_docs` is not configured), so they only appear in
-Metabase after this push.
-
-### D. Then, and only then, spike Lightdash
-
-Per Frame 1 and Frame 4. Acceptance test and open questions are in Frame 4.
+Superset dataset columns have a `description` field settable over the REST
+API, but nothing ships the dbt manifest into it — extend
+`register_marts_datasets.sh` (or a sibling script) to read
+`dbt/target/manifest.json` and PUT column descriptions per dataset.
+Alternative: configure dbt `persist_docs` so descriptions land as database
+comments, which Superset reads on dataset sync. Either way the source of
+truth stays the dbt YAML.
 
 ---
 
@@ -409,44 +385,32 @@ Better than the current state mainly because failures become visible.
 
 ## Owner decisions (no network needed)
 
-### 4. MCP restriction posture
+### 4. AI-client and Planning-Team access posture
 
-Tested today with group-scoped API keys:
+Two related decisions, detail in `HOWTO.md` §1:
 
-- **Tool visibility is not a permission boundary** — a Planning Team key sees
-  all 15 tools, `execute_sql` included.
-- **Group permissions enforce** — Planning Team → `execute_sql` is refused
-  (*"You do not have permission to run native queries against this database"*).
-  **D-17 survives MCP.**
-- **`bi_reader` enforces even for admins** — an admin key hitting
-  `stg_sibc.chat_msgs` got `permission denied for schema stg_sibc`. **D-16
-  holds through a second access path.**
-- **Write tools are NOT blocked** — a Planning Team key created a collection
-  (probe archived). Same authority as in the browser, now reachable by an agent
-  acting on a loose instruction.
-
-Decide: set `mcp-execute-sql-enabled: false` (kills raw SQL over MCP
-instance-wide, including admins)? Restrict write scopes? Note it is
-**unverified** whether an admin can cap the grantable scope set per client —
-test before relying on scopes as enforcement. Detail in `HOWTO.md` §1.
-
-### 5. dbt-metabase dependency — DONE
-
-Committed as `d3dd7fb` (`dbt-metabase>=1.7.5` in the `transform` group). The
-tool is now proven here; see §1.
+- **AI clients:** the enforcing layer is the DB role — an MCP Postgres
+  connector gets marts-only read credentials (`superset_reader`'s grants),
+  never `analytics_user`. Decide whether agents may hold a Superset login at
+  all; an Admin session can register new warehouse connections, which makes
+  it equivalent to whatever credentials the admin can type.
+- **Planning Team:** configure the dashboards-only Superset role (Gamma
+  minus SQL Lab) so D-17 is enforced in the app as well as at the role.
+  Until then every Superset login can open SQL Lab; `superset_reader` still
+  caps what that reads.
 
 ### 6. Carried-forward open items
 
 | Item | State |
 |---|---|
 | **Q-04 permanent owner** | Deferred; ACH interim. The one deliverable code cannot close |
-| `MB_ENCRYPTION_SECRET_KEY` | Only in local `.env` — needs a password manager / Key Vault |
+| `SUPERSET_SECRET_KEY` + `superset_reader` password | Only in local `deploy/superset/.env` — needs a password manager / Key Vault |
 | Deployment site code | `KR_LOOP_PILOT` is a placeholder; confirm before it labels a dashboard |
 | Glucose units | Normalised by threshold; a per-row unit from Discovery would retire the heuristic |
 | ichms table scope | Identifier columns dropped, but no mart reads these tables at all |
 | PII inventory R-7 / R-8 | Discovery clinical payload tables; re-run inventory on target changes |
 | Unmapped cohort users | 2 active members with no iccoli link — owner follow-up |
-| Metabase upgrade cadence | v0.63 EOL **2026-09-07**; non-LTS gets ~2 months. Put it on a calendar |
+| Superset upgrade cadence | Pinned `6.1.0` in the deploy Dockerfile; check releases quarterly, back up before bumping |
 | Q-03 existing BI tool | Never answered; would only have changed Phase 4 |
 | Q-13 production hosting | No longer harmless to defer — it is what blocks §3 (nothing is scheduled) |
 
@@ -483,21 +447,13 @@ tool is now proven here; see §1.
 
 ---
 
-## Test artefacts left in place
+## Local state worth knowing
 
-- `planner.test@invites.local` — All Users + Planning Team, not superuser,
-  password in the session scratchpad (ephemeral). Kept for permission testing;
-  delete via Admin → People when done.
-- MCP server registered with Claude Code at **local scope**
-  (`~/.claude.json`, this project only), OAuth authorised as admin. MCP tools
-  load at session start — start a fresh session to use them.
-- All test API keys deleted; probe collection archived. The admin key minted
-  2026-08-07 for the FK sync was deleted immediately after (verified: the API
-  now returns 401). No API keys currently exist in the instance.
-- Local stack sizing changed 2026-08-07: Colima VM 4 CPU / 8 GiB → **2 CPU /
-  4 GiB**, and `JAVA_OPTS` 3g → **2g** in both `.env` and `docker-compose.yml`
-  in `invites-loop-bi-deploy` (uncommitted there; `.env.bak.20260807` kept).
-  The heap cap had to come down with the VM — `-Xmx3g` inside a 4 GiB VM is the
-  documented exit-137 trap. Measured after: 1.26 GiB of 3.81 GiB, 0 restarts.
-- Last verified backup restore: 2026-08-06 post-upgrade — 178 tables,
-  5 dashboards, 11 questions, 5 permission groups into a scratch container.
+- Superset stack running on **:8088** (Colima VM: 2 CPU / 4 GiB). Admin login
+  is `admin`; its password, the app-DB password, `SUPERSET_SECRET_KEY` and the
+  `superset_reader` warehouse password are all in `deploy/superset/.env`
+  (gitignored, generated). Move the lot to the password manager — see §6.
+- The only Superset content is what the scripts create: 19 datasets and the
+  `pi-metrics` dashboard. No API keys, no extra users, no UI-only content —
+  the app DB is currently reproducible from git, which makes this the cheapest
+  moment to do the backup/restore drill (HANDOVER.md #4).

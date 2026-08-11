@@ -1,10 +1,9 @@
-# Superset deploy (migration/superset branch)
+# Superset deploy
 
-Apache Superset 6.1.0 against the same warehouse as the Metabase stack in
-`invites-loop-bi-deploy`, run side by side for a tool comparison
-(owner decision 2026-08-11). Superset on **:8088**, Metabase keeps :3000.
-Neither touches the other: Superset connects as its own `superset_reader`
-role (marts-only, read-only), Metabase keeps `bi_reader`.
+Apache Superset (pinned 6.1.0) — the BI viewer for the `invites_dw` warehouse.
+It connects as `superset_reader`: read-only, scoped to the `marts` schema and
+nothing else, with the session timezone pinned to Asia/Seoul at the role.
+Runs on a laptop with nothing but Docker (Colima), server on **:8088**.
 
 ## Bring-up
 
@@ -28,21 +27,30 @@ and the METRICS.ko.md interpretation rules are all created by
 Re-running it rewrites the layout; UI edits to these charts do not survive,
 by design (same rule as "metrics live in git, not in dashboard cards").
 
-## How this maps to the Metabase deploy
+## The pieces, and why they are shaped this way
 
-| Concern | Metabase (`invites-loop-bi-deploy`) | Superset (here) |
-|---|---|---|
-| App DB | `metabase-app-db` (postgres:17) | `superset-app-db` (postgres:17) |
-| Warehouse role | `bi_reader` | `superset_reader` (parallel, same guarantees) |
-| KST report dates (D-18) | `MB_REPORT_TIMEZONE=Asia/Seoul` | `ALTER ROLE ... SET timezone` — Superset has no report-timezone setting |
-| Warehouse connection | UI only (OSS limitation) | `superset set-database-uri` in the init service — config, not clicks |
-| Tables visible to users | automatic schema sync | explicit datasets (`register_marts_datasets.sh`); new dbt models need a re-run |
-| Version policy | current line, ~2-month EOL treadmill | pinned 6.1.0; slower release train |
-| Secrets at rest | `MB_ENCRYPTION_SECRET_KEY` | `SUPERSET_SECRET_KEY` (same "changing it orphans credentials" rule) |
+| Piece | Rationale |
+|---|---|
+| `superset-app-db` (postgres:17) | Superset's own storage: dashboards, users, encrypted warehouse credentials. Named volume — the one thing here that is real data. Never the SQLite default (D-13). Matches the warehouse major version so there is one Postgres idiom to learn. |
+| `superset-init` (one-shot) | Migrates the app DB, ensures the admin user, registers the warehouse connection with `set-database-uri` — the whole bootstrap is config, not clicks, and idempotent on every `up`. |
+| `Dockerfile` | Upstream ships no DB drivers at all; the derived image adds `psycopg2-binary`. Version bumps happen here (change the `FROM` tag, back up first, no downgrades). |
+| `superset_reader` role | The PII boundary. Read-only at the transaction level, marts-only by grant, **proved** by the verification block in `sql/02_superset_grants.sql` rather than assumed. |
+| `ALTER ROLE ... SET timezone = 'Asia/Seoul'` | `ymd` is a business date on a KST midnight boundary (D-18). Superset's time grains compile to `date_trunc()` in the warehouse session, so the session timezone IS the report timezone — it is enforced at the role, not in chart settings. |
+| Explicit datasets | Superset does not schema-sync. New dbt models become visible by re-running `register_marts_datasets.sh`; permissions need nothing (default privileges cover new marts objects). |
+| `SUPERSET_SECRET_KEY` | Encrypts stored warehouse credentials at rest. Changing it orphans every stored secret — keep it with the backups. |
+
+Timeouts are set in two places on purpose: the role kills runaway queries
+(`statement_timeout = 120s`) and `SQLLAB_TIMEOUT` matches it so the UI stops
+waiting when the database has already given up. Keep the two in sync.
 
 ## Backups
 
-Same principle as the Metabase runbook: the app DB named volume
-(`superset_app_db_data`) is the only real state. `pg_dump` it the same way
-`scripts/backup.sh` does in the deploy repo; a Superset-specific script can be
-copied over once the comparison decides anything is worth keeping.
+The app DB named volume (`superset_app_db_data`) is the only real state.
+`pg_dump` it from inside the network (the port is deliberately not published):
+
+```bash
+docker exec superset-app-db pg_dump -U superset -Fc superset_app > backups/superset_app_$(date +%Y%m%d).dump
+```
+
+A restore drill — performed, not merely scripted — is still an open handover
+item (HANDOVER.md #4), as is a Korean runbook (#6).

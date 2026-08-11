@@ -29,7 +29,7 @@ bridge row is updated — the register is the to-do list.
 
 ## Adding a metric
 
-See `METRICS.ko.md` in the deploy repo (`invites-loop-bi-deploy`). In short:
+See `deploy/superset/METRICS.ko.md`. In short:
 edit or add a view here, `dbt build`, open a PR. A metric definition changes in
 git, under review — never by someone editing SQL inside a dashboard card, which
 is why native SQL is switched off for the Planning Team (D-17).

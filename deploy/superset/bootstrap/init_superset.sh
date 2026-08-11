@@ -2,8 +2,8 @@
 # One-shot bootstrap, run by the superset-init service before the server
 # starts. Every step is idempotent, so this runs on every `docker compose up`.
 #
-# This is the part Metabase OSS cannot do: the warehouse connection is
-# registered from configuration, not clicked into an admin UI.
+# The warehouse connection is registered from configuration, not clicked
+# into an admin UI — the whole bring-up is reproducible from the repo.
 set -euo pipefail
 
 echo "==> superset db upgrade (app-DB migrations)"

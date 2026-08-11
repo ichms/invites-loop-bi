@@ -9,7 +9,7 @@
 -- This is a deliberately static VALUES list, not a query. It is a register: a
 -- reviewable, diffable statement of which proxy stands in for which outcome and
 -- what is missing. It belongs in SQL so the Planning Team can read it in
--- Metabase next to the metrics it qualifies, instead of in a document nobody
+-- Superset next to the metrics it qualifies, instead of in a document nobody
 -- opens.
 --
 -- Maintenance: when a data source arrives, add the real `v_kpi_*` view and

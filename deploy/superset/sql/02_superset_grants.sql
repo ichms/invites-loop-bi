@@ -1,8 +1,8 @@
 -- What superset_reader may read: `marts`, and nothing else.
 --
--- Mirror of invites-loop-bi-deploy/sql/02_grants.sql for the Superset role.
 -- Run against the WAREHOUSE after 01_superset_reader_role.sql, as the role
--- that owns the marts objects (the dbt user):
+-- that owns the marts objects (the dbt user), because ALTER DEFAULT
+-- PRIVILEGES only affects objects created by the role that runs it:
 --
 --   psql "$WAREHOUSE_URI" -f deploy/superset/sql/02_superset_grants.sql
 --
@@ -18,10 +18,10 @@ GRANT SELECT ON ALL TABLES IN SCHEMA marts TO superset_reader;
 --    empty" instead of a permission problem.
 ALTER DEFAULT PRIVILEGES IN SCHEMA marts GRANT SELECT ON TABLES TO superset_reader;
 
--- 3. Explicitly take away everything else. The `public` caveat from the
---    bi_reader script applies verbatim: its USAGE belongs to PUBLIC and cannot
---    be revoked by analytics_user on Azure; the block below proves the
---    residual is harmless instead of assuming it.
+-- 3. Explicitly take away everything else. `public` is a special case on
+--    Azure: its USAGE belongs to the PUBLIC pseudo-role and cannot be revoked
+--    by analytics_user; the block below proves the residual is harmless
+--    (empty and unwritable) instead of assuming it.
 REVOKE ALL ON SCHEMA public FROM superset_reader;
 REVOKE ALL ON SCHEMA staging FROM superset_reader;
 REVOKE ALL ON SCHEMA stg_meta FROM superset_reader;

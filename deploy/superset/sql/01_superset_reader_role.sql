@@ -1,15 +1,16 @@
 -- superset_reader: the role Superset connects to the data warehouse as.
 --
--- A PARALLEL of bi_reader (invites-loop-bi-deploy/sql/01_readonly_role.sql),
--- not a replacement: Metabase keeps bi_reader while the Superset/Metabase
--- comparison runs, so neither tool can break the other. Same guarantees:
--- read-only, scoped to `marts` only, no privileged attributes.
+-- D-16: read-only, and scoped to `marts` ONLY. The warehouse holds identity,
+-- clinical and genomic data in its landing schemas; a Superset user must never
+-- be able to reach stg_sibc.user_dtc_log or stg_sibc.chat_msgs, and the way to
+-- guarantee that is a role that cannot see them at all — not a Superset
+-- permission someone can toggle.
 --
--- One addition over bi_reader: `timezone = 'Asia/Seoul'`. Metabase solved the
--- KST-midnight problem (D-18) with MB_REPORT_TIMEZONE; Superset has no such
--- setting — its time grains compile to date_trunc() executed in the warehouse
--- session, so the session timezone IS the report timezone. Pinning it on the
--- role makes every GUI date-grouping on a timestamptz column agree with `ymd`.
+-- Also `timezone = 'Asia/Seoul'`: `ymd` is a business date on a KST midnight
+-- boundary (D-18). Superset has no report-timezone setting — its time grains
+-- compile to date_trunc() executed in the warehouse session, so the session
+-- timezone IS the report timezone. Pinning it on the role makes every GUI
+-- date-grouping on a timestamptz column agree with `ymd`.
 --
 -- Run against the WAREHOUSE (invites_dw), as a role with CREATEROLE:
 --
@@ -37,7 +38,11 @@ $$;
 
 ALTER ROLE superset_reader WITH PASSWORD :'superset_reader_password';
 
--- Same reasoning as bi_reader: set what CREATEROLE may set, prove the rest.
+-- PostgreSQL 16+ requires you to HOLD an attribute to grant or revoke it on
+-- someone else, and the privileged ones need a superuser even to turn OFF.
+-- So the script sets what CREATEROLE may set and PROVES the rest below —
+-- the stronger arrangement anyway, since it fails if the role ever acquires
+-- a privileged attribute by another route.
 ALTER ROLE superset_reader NOCREATEROLE NOINHERIT;
 
 DO $$
@@ -60,9 +65,9 @@ $$;
 -- Read-only at the transaction level, not just by grants.
 ALTER ROLE superset_reader SET default_transaction_read_only = on;
 
--- SQL Lab invites exploratory queries even more than Metabase's GUI does;
--- a runaway one dies rather than holding warehouse resources. Matches
--- SQLLAB_TIMEOUT in superset_config.py — keep the two in sync.
+-- SQL Lab invites exploratory queries; a runaway one dies rather than holding
+-- warehouse resources. Matches SQLLAB_TIMEOUT in superset_config.py — keep
+-- the two in sync.
 ALTER ROLE superset_reader SET statement_timeout = '120s';
 ALTER ROLE superset_reader SET idle_in_transaction_session_timeout = '60s';
 

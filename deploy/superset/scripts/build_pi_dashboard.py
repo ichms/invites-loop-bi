@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Build the PI dashboard in Superset from the v_pi_* / v_bridge_* datasets.
 
-The Superset counterpart of the dashboard METRICS.ko.md describes for
-Metabase — except here it is code: charts, layout and the interpretation
-rules are all created through the REST API, so the dashboard is
-reproducible from the repo instead of living only in an admin's clicks.
+The dashboard METRICS.ko.md describes, as code: charts, layout and the
+interpretation rules are all created through the REST API, so the
+dashboard is reproducible from the repo instead of living only in an
+admin's clicks.
 
 Idempotent: charts are matched by name and updated in place; the dashboard
 is matched by slug and its layout rewritten. Manual chart edits in the UI
