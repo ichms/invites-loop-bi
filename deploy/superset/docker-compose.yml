@@ -1,0 +1,107 @@
+# Apache Superset + its application database.
+#
+# Deliberately the same shape as the Metabase stack in invites-loop-bi-deploy,
+# so the comparison is tool vs tool, not deployment vs deployment:
+#
+#   superset          the BI server. Stateless — everything it knows lives in
+#                     the app DB below.
+#   superset-app-db   Superset's OWN storage: dashboards, charts, users, roles,
+#                     and the warehouse connection. Real data, NOT reproducible
+#                     from this repo.
+#   superset-init     one-shot bootstrap: migrates the app DB, creates the
+#                     admin user, and registers the warehouse connection.
+#                     Exits 0 and stays exited. Idempotent — safe on every up.
+#
+# The DATA WAREHOUSE is a third thing and is not in this file: Superset
+# connects to it as `superset_reader` (sql/01_superset_reader_role.sql).
+# Unlike Metabase OSS, the connection IS registered from config here
+# (bootstrap/init_superset.sh) — no UI step required. Score one for Superset.
+#
+# Runs on a laptop with nothing but Docker (Colima). Ports: Superset on 8088,
+# so it can run alongside Metabase on 3000.
+
+services:
+  superset-app-db:
+    # Matches the warehouse's major version, same reasoning as the Metabase
+    # stack: one Postgres idiom, identical pg_dump/psql behaviour.
+    image: postgres:17-alpine
+    container_name: superset-app-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SS_DB_DBNAME:-superset_app}
+      POSTGRES_USER: ${SS_DB_USER:-superset}
+      POSTGRES_PASSWORD: ${SS_DB_PASS:?SS_DB_PASS is required — copy .env.example to .env}
+    volumes:
+      # NAMED volume, never a bind mount (Colima host-mount permissions).
+      - superset_app_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SS_DB_USER:-superset} -d ${SS_DB_DBNAME:-superset_app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # Not published to the host; nothing outside this network needs it.
+    expose:
+      - "5432"
+
+  superset-init:
+    # PINNED exact version (same policy as Metabase, D-14): upgrades happen
+    # when someone chooses. Superset releases are slower-moving than current-
+    # line Metabase — 6.1.0 is the newest stable (2026-05). The image is built
+    # locally from ./Dockerfile because upstream ships without any DB driver;
+    # to bump: back up first, change the FROM tag in the Dockerfile,
+    # `docker-compose build && up -d`, watch the init logs for `superset db
+    # upgrade` migrations. No downgrades.
+    build: .
+    image: invites-superset:6.1.0
+    container_name: superset-init
+    depends_on:
+      superset-app-db:
+        condition: service_healthy
+    environment: &superset-env
+      SUPERSET_CONFIG_PATH: /app/superset_config.py
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?SUPERSET_SECRET_KEY is required — see .env.example}
+      SS_DB_DBNAME: ${SS_DB_DBNAME:-superset_app}
+      SS_DB_USER: ${SS_DB_USER:-superset}
+      SS_DB_PASS: ${SS_DB_PASS:?SS_DB_PASS is required}
+      SS_ADMIN_USER: ${SS_ADMIN_USER:-admin}
+      SS_ADMIN_EMAIL: ${SS_ADMIN_EMAIL:-admin@localhost}
+      SS_ADMIN_PASSWORD: ${SS_ADMIN_PASSWORD:?SS_ADMIN_PASSWORD is required — see .env.example}
+      # Warehouse connection, registered by the init script. Left empty, the
+      # script skips registration instead of failing the whole bootstrap.
+      SS_DW_HOST: ${SS_DW_HOST:-}
+      SS_DW_PORT: ${SS_DW_PORT:-5432}
+      SS_DW_DBNAME: ${SS_DW_DBNAME:-invites_dw}
+      SS_DW_USER: ${SS_DW_USER:-superset_reader}
+      SS_DW_PASSWORD: ${SS_DW_PASSWORD:-}
+    volumes:
+      - ./superset_config.py:/app/superset_config.py:ro
+      - ./bootstrap/init_superset.sh:/app/init_superset.sh:ro
+    entrypoint: ["/bin/bash", "/app/init_superset.sh"]
+    restart: "no"
+
+  superset:
+    image: invites-superset:6.1.0
+    container_name: superset
+    restart: unless-stopped
+    depends_on:
+      superset-app-db:
+        condition: service_healthy
+      superset-init:
+        condition: service_completed_successfully
+    ports:
+      - "${SS_HOST_PORT:-8088}:8088"
+    environment: *superset-env
+    volumes:
+      - ./superset_config.py:/app/superset_config.py:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8088/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      # Python cold start is faster than Metabase's JVM, but stay generous.
+      retries: 20
+      start_period: 60s
+
+volumes:
+  superset_app_db_data:
+    name: superset_app_db_data
