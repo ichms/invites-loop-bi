@@ -16,11 +16,17 @@ cp .env.example .env            # fill in secrets (see comments in the file)
 psql "$WAREHOUSE_URI" -v superset_reader_password="$SS_DW_PASSWORD" -f sql/01_superset_reader_role.sql
 psql "$WAREHOUSE_URI" -f sql/02_superset_grants.sql
 
-docker compose up -d            # init service bootstraps, then the server starts
+docker-compose up -d            # init service bootstraps, then the server starts
 ./scripts/register_marts_datasets.sh   # marts tables/views → Superset datasets
+./scripts/build_pi_dashboard.py        # PI dashboard (charts + layout) as code
 ```
 
 Login at http://localhost:8088 with `SS_ADMIN_USER` / `SS_ADMIN_PASSWORD`.
+The PI dashboard lands at `/superset/dashboard/pi-metrics/` — charts, layout
+and the METRICS.ko.md interpretation rules are all created by
+`build_pi_dashboard.py`, so the dashboard is reproducible from git.
+Re-running it rewrites the layout; UI edits to these charts do not survive,
+by design (same rule as "metrics live in git, not in dashboard cards").
 
 ## How this maps to the Metabase deploy
 
