@@ -18,6 +18,7 @@ my_project.sublime-project
 
 # Local dev env vars (contains DB credentials)
 setup_env.sh
+deploy/superset/.env
 
 # Claude configs
 .claude/

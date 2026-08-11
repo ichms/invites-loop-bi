@@ -229,7 +229,7 @@ select
 			then ((sp.ymd_date - make_date(u.birth_year, 7, 1)) / 365.25)::numeric(5, 2)
 	end as age_at_activity,
 
-	-- Q-12: the band is what Metabase surfaces; raw age above stays for
+	-- Q-12: the band is what Superset surfaces; raw age above stays for
 	-- view-layer computation. At n=404, raw age in a GUI filter makes
 	-- small-cell exposure trivially reachable.
 	case

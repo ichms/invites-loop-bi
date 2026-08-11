@@ -5,7 +5,7 @@
 -- responsiveness metric needs:
 --   delivered_at        when the activity was created for the user
 --   completed_at        when they completed it (NULL = delivered, not completed)
---   is_completed        the flag Metabase users will actually filter on
+--   is_completed        the flag Superset users will actually filter on
 --   response_latency_minutes  completed_at - delivered_at
 --
 -- Non-completions are kept deliberately — they are the denominator. A fact

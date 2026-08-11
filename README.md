@@ -12,7 +12,7 @@ A config-driven **ELT** pipeline that extracts operational data from five Postgr
 - **Ensures consistency**: one place where a metric is defined, in git, reviewable.
 - **Optimizes performance**: moves rows as `COPY ... CSV` bytes between PostgreSQL instances, never materializing them in Python.
 
-**Status:** all five phases are complete. `dbt build` **211/211**, `pytest` **117/117**. Extract → load → transform → marts → metric views → Metabase all work — **when invoked by hand**. Nothing runs unattended yet; no Airflow scheduler is deployed (see [`todo.md`](todo.md) §3).
+**Status:** all five phases are complete. `dbt build` **211/211**, `pytest` **117/117**. Extract → load → transform → marts → metric views → Superset all work — **when invoked by hand**. Nothing runs unattended yet; no Airflow scheduler is deployed (see [`todo.md`](todo.md) §3).
 
 Architecture in depth: [`CLAUDE.md`](CLAUDE.md). Decisions and rejected options: [`INVITES_LOOP_BI_DECISION_LOG.md`](INVITES_LOOP_BI_DECISION_LOG.md). Where measurement overruled the plan: [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) §3. Operational recipes: [`HOWTO.md`](HOWTO.md).
 
@@ -22,7 +22,7 @@ Architecture in depth: [`CLAUDE.md`](CLAUDE.md). Decisions and rejected options:
 
 This warehouse serves two populations with genuinely different needs, and conflating them produces a system that satisfies neither.
 
-**The Planning Team** author questions in a GUI and must never write SQL (D-17). They are served by the star schema: conformed dimensions, facts with a declared grain, and FK metadata pushed into Metabase so cross-table filtering works without SQL.
+**The Planning Team** author questions in a GUI and must never write SQL (D-17). They are served by the star schema: conformed dimensions, facts with a declared grain, every marts relation registered as a curated Superset dataset, and the PI dashboard built from code (`deploy/superset/scripts/build_pi_dashboard.py`) so no chart definition lives outside git.
 
 **Analysts and data engineers** ask questions no GUI can answer — rank correlation, Mann-Whitney U, OLS with covariate control. **No BI tool does this**, so the requirement lands on the warehouse rather than on the viewer: the marts must be shaped so a notebook can pick them up directly.
 
@@ -58,6 +58,8 @@ invites-loop-bi/
 │   │       └── metrics/            # v_pi_* / v_bridge_* — the quotable numbers
 │   ├── tests/                      # singular tests, incl. spine reconciliation
 │   └── docs/dbt_docs.html          # committed lineage + column docs (Q-07)
+├── deploy/superset/                # BI viewer: compose stack, superset_reader role SQL,
+│                                   #   dataset registration + PI dashboard as code
 ├── analysis/                       # one-off notebooks (scipy / statsmodels)
 ├── src/
 │   ├── invites_loop_bi/
@@ -80,7 +82,7 @@ invites-loop-bi/
 - **Data movement**: PostgreSQL `COPY` via psycopg2 — no dataframe layer
 - **Storage**: PostgreSQL / Azure PostgreSQL (source systems and OLAP DW)
 - **Transform**: dbt Core 1.10 + dbt-postgres (Apache 2.0; D-03)
-- **Viewer**: Metabase OSS, from the sibling repo `invites-loop-bi-deploy`
+- **Viewer**: Apache Superset (pinned, Apache 2.0), from [`deploy/superset/`](deploy/superset/)
 - **Orchestration**: Apache Airflow 3.2+ (the pipeline also runs standalone)
 
 ---
@@ -168,4 +170,4 @@ Reference tables go in the matching `*_FULL_REFRESH_TARGETS` list with `"load_ty
 
 `exclude_columns` serves data minimisation as well as payload size. If a model needs a field excluded there, that is a policy conversation (see `PII_INVENTORY.md`), not a config edit.
 
-For adding a dim or fact, and for pushing FK metadata to Metabase, see [`HOWTO.md`](HOWTO.md) §2 and §3.
+For adding a dim or fact, and for exposing it to Superset as a dataset, see [`HOWTO.md`](HOWTO.md) §2 and §3.

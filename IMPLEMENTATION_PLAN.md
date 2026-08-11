@@ -79,8 +79,8 @@ where does PII minimisation actually happen, given EL already lands everything?
   `DROP TABLE` the already-landed copies. Keep only what marts need (`birth` → reduce to
   `birth_year` at dbt staging per D-23, `gender`). This applies §2.5's own principle at the
   boundary it was written for.
-- **(b) Fallback if (a) is cut for time:** rely on role separation — `bi_reader` is marts-only
-  (D-16), so Metabase never sees these — and record in the PII inventory that raw identifiers
+- **(b) Fallback if (a) is cut for time:** rely on role separation — `superset_reader` is
+  marts-only (D-16), so Superset never sees these — and record in the PII inventory that raw identifiers
   persist in warehouse landing schemas, reachable by anyone with warehouse credentials and
   present in every warehouse backup. This is a documented hole, not a policy.
 
@@ -106,7 +106,7 @@ Surfaced explicitly per the log's §6 rule. None reverses a rationale; two simpl
    the EL landing layer in the warehouse. Proposal: **landing schemas stay `stg_<system>`**
    (no churn in a working pipeline); dbt staging models are **views in a new `staging` schema**
    (files named `stg_<system>__<table>.sql` per dbt convention); dims/facts/metric views are
-   **tables+views in a new `marts` schema**. `bi_reader` is granted `marts` only — one schema,
+   **tables+views in a new `marts` schema**. `superset_reader` is granted `marts` only — one schema,
    one grant, matching D-16/D-17. The dbt README states the landing-vs-staging distinction in
    its first paragraph.
 3. **D-02 refinement:** there are five L DAGs, not one, so "`dbt build` at the end of the L
@@ -315,28 +315,29 @@ then remaining facts; **never** the grain tests).
       root `.gitignore` had an unanchored `docs/` rule that also swallowed `dbt/docs/`; it is
       now root-anchored (`/docs/`).
 
-### Phase 4 — Metabase, locally (Days 8–10) — **DONE 2026-08-06**
+### Phase 4 — Superset, locally (Days 8–10) — **DONE 2026-08-11 except the restore drill**
 
-- [x] `invites-loop-bi-deploy` repo created at `../invites-loop-bi-deploy` (sibling), the
-      log's layout exactly. Colima notes are in its README first section, including the
-      `--cpu 4 --memory 8` requirement (the 2 GB default OOM-kills Metabase with exit 137,
-      which reads like an app bug). This machine has the standalone `docker-compose` binary,
-      not the `docker compose` plugin; the scripts detect either.
-- [x] Metabase pinned to **`v0.58.24`** — the LTS line, not the newest release: security
-      patches without feature churn is the right trade for an instance whose owner is
-      leaving. Verified multi-arch (the VM is aarch64). `postgres:17-alpine` app DB on a
-      **named volume** (Colima host mounts are not writable by the postgres user), matching
-      the warehouse's major version so there is one Postgres idiom to learn. D-18 env vars
-      set. Stack is **up and healthy** (~30s to healthy).
-- [x] `01_readonly_role.sql` + `02_grants.sql` written. **Q-09 resolved 2026-08-06: `grmc`
-      was deleted and does not share this warehouse**, so no cross-tenant carve-out. The
-      files split on a privilege line: role creation needs `CREATEROLE`, grants need only the
-      marts owner. Beyond D-16's read-only requirement the role also gets
-      `default_transaction_read_only`, a 120s `statement_timeout`, and an idle-transaction
-      timeout; `02_grants.sql` ends with a block that **raises** if `bi_reader` can reach any
-      schema but `marts`.
-- [x] **`bi_reader` created 2026-08-06** after the admin granted `analytics_user` CREATEROLE.
-      Two PostgreSQL constraints shaped the final script: `SUPERUSER`/`REPLICATION`/
+- [x] Deploy stack at `deploy/superset/`, the log's layout exactly. Runs on Colima; this
+      machine has the standalone `docker-compose` binary, not the `docker compose` plugin.
+- [x] Superset pinned to **`6.1.0`** (newest stable) through a one-line derived Dockerfile —
+      upstream ships **no database drivers at all**, so the image adds `psycopg2-binary`
+      and nothing else (D-20). Verified multi-arch (the VM is aarch64). `postgres:17-alpine`
+      app DB on a **named volume** (Colima host mounts are not writable by the postgres
+      user), matching the warehouse's major version so there is one Postgres idiom to learn.
+      Stack is **up and healthy**; the one-shot `superset-init` service migrates the app DB,
+      ensures the admin user, and registers the warehouse connection — idempotent on every
+      `up`, so the bring-up is config, not clicks.
+- [x] `01_superset_reader_role.sql` + `02_superset_grants.sql` written. **Q-09 resolved
+      2026-08-06: `grmc` was deleted and does not share this warehouse**, so no cross-tenant
+      carve-out. The files split on a privilege line: role creation needs `CREATEROLE`,
+      grants need only the marts owner. Beyond D-16's read-only requirement the role also
+      gets `default_transaction_read_only`, a 120s `statement_timeout`, an idle-transaction
+      timeout, and **`timezone = 'Asia/Seoul'`** (D-18 — Superset's time grains run as
+      `date_trunc()` in the warehouse session, so KST is enforced at the role);
+      `02_superset_grants.sql` ends with a block that **raises** if `superset_reader` can
+      reach any schema but `marts`.
+- [x] **`superset_reader` created 2026-08-11** (`analytics_user` holds CREATEROLE).
+      Two PostgreSQL constraints shaped the script: `SUPERUSER`/`REPLICATION`/
       `BYPASSRLS` need a superuser *even to turn off*, and PG16+ requires holding an
       attribute to revoke it on someone else. So the script sets only what a CREATEROLE
       holder may set and **proves** the rest — stronger than a blind `ALTER`, since it also
@@ -345,29 +346,25 @@ then remaining facts; **never** the grain tests).
       the `PUBLIC` pseudo-role, so `REVOKE` is a silent no-op as `analytics_user`); it is
       instead asserted **empty and non-writable**, with an explicit admin command recorded
       for the day that stops being true.
-      **Isolation verified by connecting as the role:** reads `marts` (404 users, 11 tables);
-      `permission denied` on `stg_sibc`, `stg_iccoli`, `stg_ichms`, `staging`; writes
-      rejected by `default_transaction_read_only`.
-- [x] Warehouse connection added in Metabase as `bi_reader`, schema filter `marts`; 11 tables
-      synced. Sample H2 database removed so demo data cannot be mistaken for real.
-- [x] Permission groups: **Planning Team = query builder, native SQL off** (D-17); All Users
-      cannot create queries. **Finding: `view-data: blocked` is Enterprise-only** (HTTP 402
-      on OSS), so group permissions *cannot* be what keeps anyone away from raw PII — the
-      `bi_reader` role is, exactly as D-16 intended. Recorded in the deploy README.
-- [x] **Three dashboards** (Korean, per the language convention): 코호트 개요 / 질환 위험도 /
-      참여 및 코칭, 11 cards, all returning data. Every card is a **query-builder** question
-      rather than native SQL, so a Planning Team member can open one and see how it was
-      built. Cross-checked against direct SQL (404 cohort, 2 unmapped, 128,816 coaching
-      non-completions, 2,933 weight readings) and the month buckets render at `+09:00`,
-      confirming `MB_REPORT_TIMEZONE` is live.
-      Note: the log rejects *scripting dashboards for reproducibility* (§4.3) — these were
-      authored once through the API as a faster substitute for clicking, and no provisioning
-      script is kept, so the rationale (don't invest in the cheapest layer; content lives in
-      the app DB) holds.
-- [x] `backup.sh` / `restore.sh`, and **the restore was actually performed** (D-15):
-      `metabase_app_20260806_140926.sql.gz` (124K) restored into a throwaway container →
-      135 tables, 1 dashboard, 37 saved questions, 1 user, 3 permission groups, 1 database
-      connection. Recorded in the deploy README; goes in `RUNBOOK.ko.md` in Phase 5.
+      **Isolation verified by connecting as the role:** reads `marts` (404 users), session
+      timezone `Asia/Seoul`; the grant script's verification block confirms no schema and
+      no table outside `marts` is reachable.
+- [x] Warehouse connection registered by the init service (`set-database-uri`) as
+      `superset_reader`; all **19 marts relations** (6 dims, 5 facts, 8 metric/bridge
+      views) registered as datasets by `scripts/register_marts_datasets.sh` — Superset does
+      not schema-sync, so the script is the sync, and it re-runs idempotently.
+- [x] **PI dashboard as code** (D-19): `scripts/build_pi_dashboard.py` creates 8 charts
+      over the `v_pi_*`/`v_bridge_*` views, the grid layout, and the METRICS.ko.md
+      interpretation rules as an on-dashboard card. Verified through the chart-data API:
+      every chart's query returns rows (27 weeks of measurement participation, 7 coaching
+      domains, 9 months of coverage/risk/load, 6 bridge rows), and SQL Lab returns
+      `now()` at `+09`, confirming the role timezone is live. Also verified: SQL Lab's
+      function denylist blocks `current_setting`/`version`/`pg_sleep` by default.
+- [ ] **Planning-Team role (dashboards only, no SQL Lab) — OPEN** (D-17). Until configured,
+      every Superset login can open SQL Lab; the `superset_reader` role still caps what
+      that can read, exactly as D-16 intended.
+- [ ] **Backup restore drill — OPEN** (D-15). The app-DB `pg_dump` command is documented in
+      the deploy README; the restore has not been performed yet.
 
 ### Phase 5 — metric views + handover (Days 11–14) — **DONE 2026-08-06 except Q-04**
 
@@ -391,9 +388,12 @@ then remaining facts; **never** the grain tests).
       counting disease-*days*, not distinct diseases. Fixed to `count(distinct disease_id)`,
       and an `accepted_range(0, 35)` test on the max now guards it — the average alone had
       stayed under 35 and looked fine.
-- [x] `RUNBOOK.ko.md` and `METRICS.ko.md` (Korean, per the language convention) in the deploy
-      repo. The runbook is symptom-first, with a table mapping every custom test failure to
-      what it means and what to do — explicitly including "do not raise the threshold".
+- [x] `METRICS.ko.md` (Korean, per the language convention) at `deploy/superset/` — why
+      metrics live in views, the tier system, the current metric table, and the add-a-metric
+      procedure including dataset registration. `RUNBOOK.ko.md` is **open** — write it
+      symptom-first once the stack's failure modes have been seen, with a table mapping
+      every custom test failure to what it means and what to do, explicitly including
+      "do not raise the threshold".
 - [x] Handover checklist as `HANDOVER.md` (repo root), covering the log's §5 list, the
       reading order for a successor, the traps, and the open questions carried forward.
 - [ ] **Named owner in writing (Q-04) — STILL OPEN.** The only item here with an external
@@ -410,14 +410,14 @@ then remaining facts; **never** the grain tests).
 | Q-04 named owner | Chase from Day 0; deliverable in Phase 5 |
 | Q-06 dim_user attributes | Finalised in Phase 2 against the driver tree |
 | Q-08 Jeju/Mode C placeholders | Follow log recommendation: omit from marts, document in Bridge Register |
-| Q-09 grmc co-tenancy | **Resolved 2026-08-06:** `grmc` schema deleted; it does not share this warehouse or the Metabase instance. No carve-out needed in the role |
+| Q-09 grmc co-tenancy | **Resolved 2026-08-06:** `grmc` schema deleted; it does not share this warehouse or the Superset instance. No carve-out needed in the role |
 | Q-12 age exposure | Plan implements the log's recommendation (band in marts, raw age view-layer only) |
 | Q-13 production hosting | Untouched; everything here is hosting-independent per D-28 |
 | N-01 PII at EL boundary | **Decided (a) and implemented 2026-08-06** — §3.4 and Phase 0. Phase 1's full inventory found gaps in the pruning: see `PII_INVENTORY.md` R-1..R-8, all owner decisions |
 | N-02 cohort scoping | **Decided (row_filter at EL) and implemented 2026-08-06** — §3.4 |
 | **NEW: unmapped active cohort users** | Now **two**: `2725eece…` (Phase 0) and `fbe82bc5…` (Phase 1) — both real members, both joined 2026-05-01, no iccoli mapping. Owner follow-up required; `assert_unmapped_cohort_users_pinned` fails loudly if the set changes |
 | **NEW: dim_disease row count** | **Reconciled 2026-08-06:** all 35 catalog diseases are scored, plus exactly 9 scored-but-not-displayed extras (macular degeneration, brain aneurysm, cardiac arrhythmia, endometrial cancer, endometriosis, hepatocellular carcinoma, lung cancer, Parkinson's, PCOS). Owner: focus stays on the 35 — `dim_disease` seeds from the catalog; fact rows for the 9 simply don't join to the dim and are not user-facing |
-| **NEW: no CREATEROLE credential** | **Resolved 2026-08-06:** admin granted `analytics_user` CREATEROLE; `bi_reader` created and verified. Residual: `public` still carries a `PUBLIC` USAGE grant that only an admin can revoke — asserted empty and non-writable instead |
+| **NEW: no CREATEROLE credential** | **Resolved 2026-08-06:** admin granted `analytics_user` CREATEROLE; `superset_reader` created and verified. Residual: `public` still carries a `PUBLIC` USAGE grant that only an admin can revoke — asserted empty and non-writable instead |
 | **NEW: glucose unit ambiguity** | **Resolved 2026-08-06:** owner chose normalisation to mg/dL; `<30 → ×18.0182` in staging, guarded by `assert_glucose_unit_gap_holds`. A per-row unit from the source would still be better than a threshold — worth raising with the Discovery team |
 | **NEW: deployment site code** | `dim_deployment_site.site_id = 'KR_LOOP_PILOT'` is a placeholder — no source carries a site id. Confirm before it appears as a dashboard label |
 | **NEW: `login_pw` in warehouse** | **Resolved 2026-08-06:** owner decided to discard the direct-identifier classes; `scripts/20260806_pii_cleanup_phase1.sql` (executed) dropped 26 columns across ichms/sibc/iccoli and stripped name keys from frozen legacy payloads; matching `exclude_columns` added to all three target configs. Remaining open items in PII_INVENTORY.md §Resolution status (ichms table-scope question, R-7, R-8, upstream `user_name` key) |

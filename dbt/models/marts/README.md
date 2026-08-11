@@ -1,6 +1,6 @@
 # marts — dims, facts and metric views (tables/views in the `marts` schema)
 
-The only schema the Metabase read-only role (`bi_reader`) is granted. Every
+The only schema the Superset read-only role (`superset_reader`) is granted. Every
 fact declares its grain in a header comment and enforces it with a
 `dbt_utils.unique_combination_of_columns` test — the grain tests are the one
 thing that must never be cut (decision log §2.6).

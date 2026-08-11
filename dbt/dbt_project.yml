@@ -9,7 +9,7 @@
 #   staging                    dbt staging models (views): dedupe, casts, key
 #                              translation, JSONB flattening via the allow-list.
 #   marts                      dims / facts / metric views. The only schema the
-#                              Metabase read-only role (bi_reader) can see.
+#                              Superset read-only role (superset_reader) can see.
 name: invites_loop_bi
 version: "0.1.0"
 profile: invites_loop_bi

@@ -23,7 +23,7 @@ What belongs here (and nowhere downstream):
 **One model here is a table, not a view.** `stg_discovery__lifelog_wearable_day`
 is `materialized='table'` because `disc_lifelog_user_heartrate` alone is ~8.5M
 sample rows; as a view it would re-scan on every downstream query and every
-Metabase card. It collapses to a few thousand user-days, so the table is small
+Superset chart. It collapses to a few thousand user-days, so the table is small
 even though its input is not. Keep the exception rare and justified in the
 model header.
 

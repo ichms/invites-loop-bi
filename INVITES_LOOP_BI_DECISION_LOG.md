@@ -29,11 +29,11 @@ raw JSONB logs  (sibc.*, iccoli.*, invites_loop.*)
    ↓  dbt Core — staging: flatten JSONB, type, dedupe
 stg_*
    ↓  dbt Core — marts: conform, declare grain
-dim_* / fct_*                    ← Metabase GUI surface; non-devs live here
+dim_* / fct_*                    ← Superset dataset surface; non-devs live here
    ↓  thin SQL views
 v_kpi_* / v_pi_* / v_bridge_*    ← canonical metric definitions, git-reviewed
    ↓
-Metabase (read-only role, marts schemas only)
+Superset (read-only role, marts schema only)
 ```
 
 **Design principle:** the semantic layer lives in PostgreSQL and git, not inside the BI tool. This makes the viewer choice reversible and keeps metric definitions diffable and reviewable.
@@ -56,8 +56,8 @@ Metabase (read-only role, marts schemas only)
 
 | # | Decision | Rationale |
 |---|---|---|
-| D-06 | **Star schema: conformed dims + facts with declared grain** | Not a performance argument (403 users; Postgres will not care). Three real reasons: (a) Metabase's GUI query builder is structurally a star-schema consumer — it reads FK metadata into join dropdowns; (b) sources are partitioned JSONB logs, so flattening to typed columns is mandatory work regardless; (c) a declared grain is a falsifiable contract. |
-| D-07 | **Natural keys, no surrogate keys** — `user_id` (uuid), `ymd`, `disease_id` | Metabase FK relationships work fine on natural keys. A junior debugging a broken surrogate-key map with nobody to ask is a worse outcome than any benefit gained at this scale. Deliberately against textbook Kimball. **Scoped exception:** where two source systems carry competing identifiers for the same entity and neither is canonical, one conformed key must be elected — see Q-10. Electing an existing key is not the same as minting a synthetic one. |
+| D-06 | **Star schema: conformed dims + facts with declared grain** | Not a performance argument (403 users; Postgres will not care). Three real reasons: (a) Superset charts read one dataset each, so every chartable relation needs a declared grain, and conformed dims are what make the pre-joined wide datasets derivable in one honest hop; (b) sources are partitioned JSONB logs, so flattening to typed columns is mandatory work regardless; (c) a declared grain is a falsifiable contract. |
+| D-07 | **Natural keys, no surrogate keys** — `user_id` (uuid), `ymd`, `disease_id` | Joins on natural keys are writable and debuggable by a junior with nobody to ask; a broken surrogate-key map is a worse outcome than any benefit gained at this scale. Deliberately against textbook Kimball. **Scoped exception:** where two source systems carry competing identifiers for the same entity and neither is canonical, one conformed key must be elected — see Q-10. Electing an existing key is not the same as minting a synthetic one. |
 | D-08 | **SCD Type 1 dims only. No Type 2.** Time-varying attributes (device assignment, site, cohort status) go into the fact at event time | SCD2 done wrong produces confidently wrong history and will be done wrong by someone learning it from a blog post. |
 | D-09 | **No snowflaking.** Denormalize into the dim | Every construct added is a construct that can break silently and requires expertise to fix. |
 | D-10 | **Metric definitions live in thin SQL views over the star**, one view per metric, tier encoded in prefix (`v_kpi_`, `v_pi_`, `v_bridge_`) | Once the star exists, definitions get short. Thin definitions are reviewable definitions — a reviewer can look at six lines and say "that's wrong"; nobody can do that with 80 lines of `->>`. This is what protects the KPI/PI/Bridge separation after departure. |
@@ -81,48 +81,49 @@ Metabase (read-only role, marts schemas only)
 
 | # | Decision | Rationale |
 |---|---|---|
-| D-11 | **Metabase OSS (AGPL)** as the viewer | Only candidate where a non-developer can author from a GUI *and* the runtime has one moving part. AGPL is fine for internal use (flag only if embedding in a customer-facing product is ever proposed). |
+| D-11 | **Apache Superset (Apache 2.0)** as the viewer | Non-developers author charts and dashboards from a GUI; run synchronously it is a two-container runtime (server + app DB); and everything that matters — the warehouse connection, datasets, the PI dashboard — is scriptable over the REST API, so BI content is reproducible from git rather than living only in an admin's clicks. Apache 2.0 end to end. |
 | D-12 | **No custom frontend for KPIs** | Original premise; unchanged. |
-| D-13 | **Application database is PostgreSQL, never H2** | The default H2 file is the most common way a Metabase instance becomes unrecoverable. |
+| D-13 | **Application database is PostgreSQL, never the embedded default** | An embedded metadata file is the most common way a BI instance becomes unrecoverable. |
 
 > **Terminology — two databases, unrelated purposes.** Confusing them is a common early mistake.
 >
-> 1. **Data warehouse** — the existing OLAP endpoint holding `stg_*`, `dim_*`, `fct_*`, and the metric views. Metabase *reads* from it via the `bi_reader` role. Already exists; nothing new is required here.
-> 2. **Metabase application database** — Metabase's own internal storage: dashboards, saved questions, users, permission groups, and the encrypted data-source credentials. Metabase requires one to run at all, and it defaults to an embedded H2 file if you do not supply one.
+> 1. **Data warehouse** — the existing OLAP endpoint holding `stg_*`, `dim_*`, `fct_*`, and the metric views. Superset *reads* from it via the `superset_reader` role. Already exists; nothing new is required here.
+> 2. **Superset application database** — Superset's own internal storage: dashboards, charts, users, roles, and the encrypted data-source credentials. Superset requires one to run at all, and it defaults to an embedded file if you do not supply one.
 >
 > D-13 and D-15 concern (2) only. It can be a container, a managed instance, or simply an additional database on the warehouse server — the requirement is that it is PostgreSQL and that it is backed up, not that it lives on any particular platform. It is small and low-traffic; co-locating it on the warehouse server has no meaningful performance cost at this scale.
-| D-14 | **Pin the image tag** (`metabase/metabase:v0.XX.Y`), never `:latest` | An auto-pulled major version on restart, with no one to fix the migration, is a dead instance. |
-| D-15 | **Backup = scheduled `pg_dump` of the Metabase app DB to blob storage. Restore must be tested before departure.** | Serialization (YAML export of collections/dashboards) is Pro/Enterprise only, so on OSS the app-DB dump *is* the export. An untested backup is not a backup. |
-| D-16 | **Dedicated read-only PostgreSQL role scoped to marts schemas only** | The DW holds PII and genomic data. Metabase users must never reach `sibc.user_dtc_log` raw. |
-| D-17 | **Native SQL disabled for the Planning Team group.** Query-builder access to marts only | This is the mechanism that keeps the KPI/PI separation alive after departure. |
-| D-18 | **Required env vars:** `MB_REPORT_TIMEZONE=Asia/Seoul`, `MB_START_OF_WEEK=monday`, `MB_ENCRYPTION_SECRET_KEY` (persisted in Key Vault), `MB_DB_TYPE=postgres` | **Timezone is a correctness issue, not cosmetics.** Partitions run on KST midnight boundaries and `ymd` is a business date. A UTC default shifts GUI date-grouping on `timestamptz` columns by nine hours and silently disagrees with `ymd`. `MB_ENCRYPTION_SECRET_KEY` encrypts DW credentials at rest — redeploying with a different key breaks the connection with an unhelpful error. |
-| D-19 | **Do not over-invest in making Metabase content reproducible** | It is the cheapest layer. Rebuilding three dashboards over an existing star schema is half a day. The expensive thinking is in dbt and the views. |
+| D-14 | **Pin the image tag** (`apache/superset:X.Y.Z` in the deploy Dockerfile), never `:latest` | An auto-pulled major version on restart, with no one to fix the migration, is a dead instance. |
+| D-15 | **Backup = scheduled `pg_dump` of the Superset app DB to blob storage. Restore must be tested before departure.** | The app-DB dump is the whole state; the dashboard build script in git regenerates the PI dashboard, but users, roles and any content built in the UI live only in the app DB. An untested backup is not a backup. |
+| D-16 | **Dedicated read-only PostgreSQL role scoped to the marts schema only** | The DW holds PII and genomic data. Superset users must never reach `sibc.user_dtc_log` raw. |
+| D-17 | **No SQL authoring for the Planning Team.** A dashboards-only role; SQL Lab is for analysts | This is the mechanism that keeps the KPI/PI separation alive after departure. |
+| D-18 | **Required config:** `timezone = 'Asia/Seoul'` set **on the warehouse role**, `SUPERSET_SECRET_KEY` (persisted in Key Vault), app DB on PostgreSQL | **Timezone is a correctness issue, not cosmetics.** Partitions run on KST midnight boundaries and `ymd` is a business date. Superset's time grains compile to `date_trunc()` in the warehouse session, so the session timezone IS the report timezone; a UTC session shifts GUI date-grouping on `timestamptz` columns by nine hours and silently disagrees with `ymd`. Enforcing it at the role means no chart setting can undo it. `SUPERSET_SECRET_KEY` encrypts DW credentials at rest — redeploying with a different key orphans every stored secret. |
+| D-19 | **Dashboard content is code only where code is cheap.** The PI dashboard is built by one idempotent script; beyond that, do not over-invest in content reproducibility | The viewer is the cheapest layer — the expensive thinking is in dbt and the views. One script keeps the canonical dashboard in git; ad-hoc exploration by users needs no such ceremony and gets none. |
 
 ### 2.4 Deployment
 
 | # | Decision | Rationale |
 |---|---|---|
-| D-20 | **Ship a deploy repo, not a custom Docker image** | A custom image forks off the upstream tag — taking a security patch then requires someone to rebuild and republish. Bumping one line in a compose file is something anyone can do. Also: dashboards live in the app DB, not the image, so a custom image only ever yields a configured-but-empty Metabase. |
+| D-20 | **Ship deploy config, not a forked image.** The only Dockerfile content allowed is the one-line driver install on top of the pinned upstream tag | A genuinely custom image forks off upstream — taking a security patch then requires someone to rebuild and republish. The deploy Dockerfile exists solely because upstream ships without a PostgreSQL driver; bumping is a one-line `FROM` change anyone can make. Dashboards live in the app DB and the build script, not the image, so an image cannot usefully carry content anyway. |
 | D-21 | ~~Target: Azure Container Apps~~ — **DEFERRED.** No production hosting decision is made. See Q-13 | The organisation may not remain on Azure. Committing the compose file to a specific platform now buys nothing and costs a rewrite later. |
-| D-28 | **Build and validate locally first.** `docker-compose.yml` runs Metabase plus a `postgres` container for the application database; the warehouse connection is supplied by env var and points at whatever endpoint is in use | Everything that matters — the star schema, dbt models, grain tests, metric views, permission model, dashboards — is hosting-independent. Validating locally removes the cloud-networking dependency (Q-02) from the critical path entirely. The compose file keeps the same shape in production; only `MB_DB_*` values change if the app DB later moves to a managed instance. |
+| D-28 | **Build and validate locally first.** `docker-compose.yml` runs Superset plus a `postgres` container for the application database; the warehouse connection is supplied by env var and points at whatever endpoint is in use | Everything that matters — the star schema, dbt models, grain tests, metric views, permission model, dashboards — is hosting-independent. Validating locally removes the cloud-networking dependency (Q-02) from the critical path entirely. The compose file keeps the same shape in production; only the app-DB values change if it later moves to a managed instance. |
 | D-29 | **Facts backing behavioural analysis are DENSE.** `fct_user_day` carries every user-day from the earlier of enrolment and first observed activity to the observation frontier, including days with no activity — 5,747 → 74,410 rows (2026-08-07) | A behavioural rate needs the zero days, because the zero days ARE the denominator. Aggregating over an only-active spine divides by the wrong number and biases every rate upward. Demonstrated, not theorised: `DASHBOARD_METRIC_FEEDBACK.md` §5.2 records a published "dietary logging is 미흡" verdict that was a pure denominator artifact — per-recorder intensity had *risen* 6.2 → 21.1 days/month. **Corollary (D-29a):** the spine is bounded, so rows outside its bounds vanish silently — every grain and `not_null` test still passes. `dbt/tests/assert_user_day_spine_loses_no_activity.sql` asserts fact totals equal staging totals per channel. It caught 381 dropped meal records and 23 lost recorders on the first attempt. Do not delete it when editing the spine. |
 | D-30 | **The observation frontier, never `current_date`, bounds the panel's upper edge** | Extending to today manufactures zero-activity days for dates the ELT has not loaded yet. A flat line of false zeros at the right edge of every chart reads as a product collapse, and is the kind of artifact that gets escalated before it gets diagnosed. Known limitation, deliberately not modelled: per-channel lag — if one source is stale its recent days read as zeros while others show real activity. Check `dbt source freshness` before reading the last few days of any channel. |
 
-**Deploy repo layout:**
+**Deploy layout:**
 
 ```
-invites-loop-bi-deploy/
-├── docker-compose.yml          # pinned upstream metabase tag + postgres (app DB)
-├── docker-compose.prod.yml     # override: external app DB, added only when Q-13 resolves
-├── .env.example                # every var documented inline
+deploy/superset/
+├── docker-compose.yml               # pinned image + postgres (app DB) + one-shot init
+├── Dockerfile                       # upstream tag + psycopg2 only (D-20)
+├── superset_config.py               # app config; mounted read-only
+├── .env.example                     # every var documented inline
 ├── sql/
-│   ├── 01_readonly_role.sql    # bi_reader, marts schemas only
-│   └── 02_grants.sql
+│   ├── 01_superset_reader_role.sql  # superset_reader, marts only, KST at the role
+│   └── 02_superset_grants.sql       # grants + prove-don't-assume verification
+├── bootstrap/init_superset.sh       # migrate, admin user, warehouse connection
 ├── scripts/
-│   ├── backup.sh               # pg_dump of the Metabase app DB
-│   └── restore.sh              # must be tested before departure
-├── RUNBOOK.ko.md               # 이게 안 될 때
-└── METRICS.ko.md               # 메트릭 추가하는 법
+│   ├── register_marts_datasets.sh   # marts relations → datasets (idempotent)
+│   └── build_pi_dashboard.py        # the PI dashboard, as code
+└── METRICS.ko.md                    # 메트릭 추가하는 법
 ```
 
 The base compose file is the local-development artifact and stays platform-neutral. Production hosting, if and when it is decided, arrives as an override file — not as a rewrite.
@@ -136,7 +137,7 @@ The warehouse holds identity, clinical, and genomic data on a 403-user cohort. A
 | D-22 | **Username is dropped during transform.** It does not appear in `stg_*`, `dim_*`, or `fct_*` | Direct identifier with no analytical use. Dropping at staging means no downstream model can reintroduce it by accident. |
 | D-23 | **Date of birth is reduced to `birth_year` (integer) at staging.** Full DOB is never materialised in the warehouse | DOB is a strong quasi-identifier; birth year alone supports every age-stratified analysis in the driver tree. |
 | D-24 | **Age at activity is imputed from a fixed mid-year anchor: `july 1` of the birth year.** SQL: `age_at_activity = (ymd - make_date(birth_year, 7, 1)) / 365.25` | Convention, not preference — July 1 is the standard demographic mid-year anchor (UN population estimates use it), so the choice is defensible and reproducible. Pick one and never vary it; alternating between June 30 and July 1 across models produces off-by-one age bands that are impossible to debug later. **Known measurement limit: ±6 months maximum error.** Acceptable for 5- and 10-year bands; must be disclosed if any bridge or gate query stratifies on narrower age intervals. |
-| D-25 | **`age_at_activity` is materialised as a column in the facts, not stored in `dim_user`** | `dim_user` is SCD Type 1 (D-08) and age is time-varying — a static age column would silently rot. Materialising in the fact also means Metabase GUI users get age without needing to compute it, which they cannot do. |
+| D-25 | **`age_at_activity` is materialised as a column in the facts, not stored in `dim_user`** | `dim_user` is SCD Type 1 (D-08) and age is time-varying — a static age column would silently rot. Materialising in the fact also means Superset GUI users get age without needing to compute it, which they cannot do. |
 | D-26 | **JSONB flattening in the `irs` and `sibc` schemas uses an explicit allow-list of extracted keys, not a deny-list.** Names, ages, and any other identity fields are excluded by omission | This is the load-bearing form of the decision. The backend schema docs state `모델/룰 변경으로 키 확장 가능` — the JSONB payload is a moving contract. A deny-list means a newly added `patient_name` key flows straight through to staging on the next model release, silently. An allow-list fails safe: unknown keys are ignored by default. |
 | D-27 | **Pair the allow-list with a schema-drift test** that flags top-level JSONB keys not present in the allow-list | Allow-listing alone makes drift invisible; the pairing gives fail-safe behaviour *and* visibility. Complements D-05. |
 
@@ -149,7 +150,7 @@ The warehouse holds identity, clinical, and genomic data on a 403-user cohort. A
 | 1–2 | dbt Core init, profiles against Azure PG, staging models flattening JSONB → `stg_*`, tests on extracted-field nullity |
 | 3–5 | `dim_*` + `fct_user_day` + `fct_user_disease_day`, grain tests. **Load-bearing** — if only this ships, the handover still works |
 | 6–7 | Remaining facts; `dbt build` wired into Airflow; `dbt docs` published somewhere findable |
-| 8–10 | Metabase deployed on the marts; three dashboards; permissions locked to marts-only; backup restore-tested |
+| 8–10 | Superset deployed on the marts; the PI dashboard; permissions locked to marts-only; backup restore-tested |
 | 11–14 | Metric views for T1/T2 PIs; Korean runbook + metrics doc |
 
 **Cut order if time runs out:** metric views first (rebuildable from the star), then dashboards, then remaining facts. **Never cut the grain tests** — they are what makes the rest survivable.
@@ -161,18 +162,18 @@ The warehouse holds identity, clinical, and genomic data on a 403-user cohort. A
 | # | Question | Why it blocks | Suggested resolution path |
 |---|---|---|---|
 | Q-01 | **Does `sibc.user_intg_log` produce more than one meaningful row per user per `ymd` after dedupe?** Is `created_at` an append with last-row-wins, or are there genuine intra-day revisions? | Determines whether `fct_user_day` has a clean grain or is a slowly-changing fact. Changes the model and the test. | Single query: `SELECT user_id, ymd, count(*) FROM sibc.user_intg_log GROUP BY 1,2 HAVING count(*) > 1`. Same for `user_irs_log`. |
-| Q-02 | **Is the warehouse PostgreSQL behind a private endpoint, or does it allow access from outside its network?** *(Conditional on Q-13 — not on the critical path while development is local)* | Determines whether a hosted Metabase needs VNet integration or a gateway. Can eat two days if IT is slow. | Ask IT once a production target is chosen. Does not block local work. |
+| Q-02 | **Is the warehouse PostgreSQL behind a private endpoint, or does it allow access from outside its network?** *(Conditional on Q-13 — not on the critical path while development is local)* | Determines whether a hosted Superset needs VNet integration or a gateway. Can eat two days if IT is slow. | Ask IT once a production target is chosen. Does not block local work. |
 | Q-03 | **Does anyone at Invites Ecosystem already run a BI tool?** | Institutional gravity beats tool quality on a two-week clock. An existing instance with an existing owner is better than a new orphan. | Ask the Planning Team / IT. |
-| Q-04 | **Who owns the Metabase instance and the Azure resources after departure — named, in writing?** | The most likely failure mode is not technical. An orphan container with no line in anyone's job description gets deleted or ignored. | Raise with the counterpart before the last day. Not optional. |
+| Q-04 | **Who owns the Superset instance and the Azure resources after departure — named, in writing?** | The most likely failure mode is not technical. An orphan container with no line in anyone's job description gets deleted or ignored. | Raise with the counterpart before the last day. Not optional. |
 | Q-05 | **Incremental strategy per fact model** | Partitioned append-only logs suit `incremental` with a `created_at` watermark, but the late-arriving-data window needs a number. | Decide per model during Days 3–5. |
 | Q-06 | **`dim_user` attribute list** — which attributes are actually needed to slice the driver tree? | Over-wide dims add maintenance; missing attributes block analysis. | Derive from the driver tree Layer 2 slice requirements. |
 | Q-07 | **Where do `dbt docs` get hosted?** | The junior's primary onboarding artifact. If it is not findable it does not exist. | Azure Blob static site, or commit generated HTML to the repo. |
 | Q-08 | **Do Jeju / Mode C metrics get placeholder models, or are they omitted until the deployments exist?** | Placeholders that always return NULL erode trust in the dashboard; omission loses the roadmap signal. | Recommend: omit from marts, document in the Bridge Register. |
-| Q-09 | **Does the `grmc` schema enter the same warehouse and the same Metabase instance?** | Different clinical/regulatory posture and a different audience. Affects the read-only role and permission model. | Decide before writing `01_readonly_role.sql`. |
+| Q-09 | **Does the `grmc` schema enter the same warehouse and the same Superset instance?** | Different clinical/regulatory posture and a different audience. Affects the read-only role and permission model. | Decide before writing the read-only role SQL. |
 | Q-10 | **Which identifier is elected canonical — `iccoli.user_no` or `invites_loop.user_id`?** Mapping table is `iccoli.public.tb_ext_user_mapper` | Blocks `dim_user` and every fact that joins across the two systems. See resolution notes below — this is the most consequential open item after Q-01. | Run the cardinality checks below before choosing. |
 | Q-11 | **PII inventory across all source schemas — is the "already anonymised" assumption for `iccoli`, `discovery`, and `ichms` actually true?** | D-22–D-27 harden `irs` and `sibc`. If `iccoli` carries phone/email/CI-DI and those fields flow into `stg_*` unexamined, the minimisation policy has a hole in exactly the schema most likely to contain direct identifiers. | Enumerate columns via `information_schema.columns` across all source schemas; classify each as identifier / quasi-identifier / analytical; document the result. Half a day, and it is the difference between a policy and a belief. |
-| Q-12 | **Is raw `age_at_activity` exposed to Metabase, or only banded age?** | At n=403, birth year + deployment site + sex is close to identifying. Raw age in a GUI-filterable column makes small-cell exposure trivially reachable. | Recommend: expose `age_band_5y` in the Metabase-visible layer by default; keep raw `age_at_activity` in the fact for view-layer computation only. Decide before permissions are set. |
-| Q-13 | **Production hosting target for Metabase, and where the application database lives.** Deliberately deferred | Not on the critical path. The organisation may leave Azure, and no part of the modelling work depends on the answer. | Revisit after local validation. Decision criteria below. |
+| Q-12 | **Is raw `age_at_activity` exposed to Superset, or only banded age?** | At n=403, birth year + deployment site + sex is close to identifying. Raw age in a GUI-filterable column makes small-cell exposure trivially reachable. | Recommend: expose `age_band_5y` in the Superset-visible layer by default; keep raw `age_at_activity` in the fact for view-layer computation only. Decide before permissions are set. |
+| Q-13 | **Production hosting target for Superset, and where the application database lives.** Deliberately deferred | Not on the critical path. The organisation may leave Azure, and no part of the modelling work depends on the answer. | Revisit after local validation. Decision criteria below. |
 
 ### Q-10 resolution notes — canonical user key
 
@@ -209,21 +210,21 @@ If either side fans out — re-enrolment, device change, account merge — the m
 
 Nothing below is decided. Recorded so the eventual decision is made against criteria rather than defaults.
 
-**The only requirement that survives any hosting choice:** the Metabase application database is PostgreSQL (D-13) and is backed up with a *tested* restore (D-15). Everything else is negotiable.
+**The only requirement that survives any hosting choice:** the Superset application database is PostgreSQL (D-13) and is backed up with a *tested* restore (D-15). Everything else is negotiable.
 
 **Options for the application database, in rough order of operational burden:**
 
 | Option | Who owns the backup | Notes |
 |---|---|---|
-| Postgres container beside Metabase | You | Correct for local development. In production it means someone must own `backup.sh` and its cron. |
-| Additional database on the existing warehouse server (`CREATE DATABASE metabase_app`) | The platform | No new resource, no new cost, no procurement. Inherits whatever backup policy the warehouse already has. Usually the pragmatic answer. |
+| Postgres container beside Superset | You | Correct for local development. In production it means someone must own the backup script and its cron. |
+| Additional database on the existing warehouse server (`CREATE DATABASE superset_app`) | The platform | No new resource, no new cost, no procurement. Inherits whatever backup policy the warehouse already has. Usually the pragmatic answer. |
 | Separate managed instance | The platform | Cleanest isolation, but a new resource to justify and pay for. Hard to argue for at this scale. |
 
-**Options for the Metabase runtime:**
+**Options for the Superset runtime:**
 
 | Option | Trade-off |
 |---|---|
-| Managed container service (Azure Container Apps, Cloud Run, ECS/Fargate) | No OS to patch — the main argument. Needs `minReplicas: 1`, since JVM cold-start makes scale-to-zero look like an outage. ~4 GB memory. |
+| Managed container service (Azure Container Apps, Cloud Run, ECS/Fargate) | No OS to patch — the main argument. Needs `minReplicas: 1`, since a cold start makes scale-to-zero look like an outage. |
 | VM with docker-compose | Simplest to reason about, and platform-portable. Cost: an OS that someone must patch, and nobody will. |
 | Existing internal container platform, if one exists | Best organisational survival — it already has an owner and a patching process. Check before evaluating anything else. |
 
@@ -239,10 +240,10 @@ Nothing below is decided. Recorded so the eventual decision is made against crit
 |---|---|
 | **Custom-built frontend** | No reason to build UI for numerous KPIs. Original premise. |
 | **Microsoft Power BI** | Pro is **not** included in M365 Business Basic/Standard/Premium — only E5. Pro is ~$14/user/month (raised from $10 in April 2025) and is required for **viewers**, not just authors, unless reports sit on Fabric capacity. PPU is $24/user/month. Licensing cost for the Planning Team is not approvable in the available time. *(Secondary concerns, now moot: `.pbix` is a binary and not diffable; DAX would become a second, unreviewed metric layer; a data gateway VM would be needed behind a private endpoint.)* |
-| **Apache Superset** | ~~Four moving parts — Redis, Celery workers, metadata DB, `superset_config.py`.~~ **CORRECTED 2026-08-07: this reason is factually wrong.** Redis and Celery are NOT required to run Superset; they buy async query execution, chart caching, alerts/reports and thumbnails. Run synchronously and it is two containers — parity with Metabase. The surviving objections are narrower and are about the *join model*, not operational weight: Superset explores within a single Dataset, with no FK graph driving implicit joins, so `HOWTO.md` §3 Option C (pre-join in dbt) becomes mandatory rather than optional, and D-06's stated rationale evaporates. Korean locale coverage is also unverified. **Not re-adopted, but no longer rejected for the reason given here.** See `todo.md` Frame 4. |
+| **Metabase OSS** | The closest contender: GUI authoring with a one-moving-part runtime, automatic schema sync, and FK-metadata-driven implicit joins. Rejected on reproducibility and licence: on OSS the warehouse connection and all content are UI-only (config-as-code serialization is Pro/Enterprise), so a rebuilt instance starts empty with no path from git; the licence is AGPL against Superset's Apache 2.0; the report timezone is an app setting rather than something enforceable at the database; and the current release line EOLs roughly every two months, putting an upgrade treadmill on whoever inherits the instance (Q-04). The implicit-join convenience is real but replaceable by pre-joined wide datasets (`HOWTO.md` §3), which also remove the fan-out risk the join UI invites. |
 | **Redash** | Project is in maintenance mode (community-led, ~7 volunteer maintainers, roughly one release per year since 2022; forum read-only). Independently disqualifying: every dashboard requires hand-written SQL, so non-developers cannot author. |
-| **Lightdash** | ~~Requires a dbt project as an absolute dependency (none exists today)~~, and — decisively — metric changes become a git PR, which no Planning Team member will open. Best governance fit of the four, wrong constraint. **REOPENED 2026-08-07: the disqualifier has expired.** A full dbt project now exists (staging + marts + metric views, 211/211). The PR objection also reads differently now — the `v_pi_*` definitions already require a PR, and line 39 of this log says the semantic layer should live in git rather than in the BI tool, which Lightdash *enforces* and Metabase merely permits. Added since: a commercial tier with SOC 2 / HIPAA / BAA gives the organisation a compliance escalation path without migrating, which is a direct answer to the Q-04 orphan risk. Against: no MCP on OSS, and Korean locale coverage unverified. See `todo.md` Frame 4. |
-| **Power BI + Metabase hybrid** | Two tools means two decay paths and two places for the Planning Team to find contradictory numbers. |
+| **Lightdash** | Best governance fit: metric definitions become dbt YAML in git, which line 39 of this log wants and Lightdash *enforces* where Superset merely permits. A commercial tier with SOC 2 / HIPAA / BAA would also give a compliance escalation path (Q-04). Rejected: every metric change becomes a git PR, which no Planning Team member will open — the `v_pi_*` views already give the git-reviewed layer without gating the GUI on it. Korean locale coverage also unverified. |
+| **Power BI + Superset hybrid** | Two tools means two decay paths and two places for the Planning Team to find contradictory numbers. |
 
 ### 4.2 Transformation
 
@@ -256,16 +257,15 @@ Nothing below is decided. Recorded so the eventual decision is made against crit
 | **SQLMesh** | Technically better (column-level lineage, virtual environments, no Jinja soup). Rejected on handover grounds: far smaller community, and Tobiko Data was acquired by Fivetran too, so it is not even a vendor hedge. Handover quality is a function of how many answers exist for the error message. |
 | **astronomer-cosmos** | Deferred, not permanently rejected. One more dependency for the junior to debug; unnecessary at ~15 models. Revisit if the model count grows materially. |
 
-### 4.3 Metabase-specific
+### 4.3 Superset-specific
 
 | Option | Reason for rejection |
 |---|---|
-| **Custom `invites-loop-bi` Docker image** | Forks off the upstream tag, making security patches a rebuild-and-republish task that will not happen. Dashboards live in the app DB, not the image, so the image cannot carry content anyway. |
-| **`config.yml` initialization** | Self-hosted Pro/Enterprise only. Use environment variables instead — they work on OSS and take precedence over the UI, so they lock settings harder. |
-| **Metabase serialization (YAML export/import)** | Pro/Enterprise only. App-DB `pg_dump` is the OSS equivalent. |
-| **Scripting dashboard creation via the Metabase REST API** | Technically viable on OSS and would put content in git, but spends scarce time on the layer that matters least. |
+| **Redis + Celery (async queries, alerts/reports, thumbnails)** | Not required to run Superset — they buy async execution and scheduled reports. At this scale the synchronous two-container runtime is enough, and every extra service is a thing that breaks with nobody qualified to fix it. Revisit only if alerts/reports become a real requirement. |
+| **A genuinely custom Docker image (beyond the one-line driver install)** | Forks off the upstream tag, making security patches a rebuild-and-republish task that will not happen. Dashboards live in the app DB and the build script, so the image cannot usefully carry content anyway (D-20). |
+| **Dashboard export/import ZIPs in git as the content source of truth** | The export format is UUID-laden YAML bundles — technically in git, practically unreviewable. The REST-API build script is diffable, idempotent, and carries the layout and interpretation notes in readable code. |
+| **Preset (hosted Superset)** | A new vendor and a new resource to justify while no production hosting is decided at all (Q-13). Local-first (D-28) stays. |
 | **VM deployment** | Not rejected outright — reopened under Q-13. The objection stands (an OS somebody must patch, and nobody will), but it is a trade-off against portability rather than a disqualification. |
-| **Metabase Enterprise "verified" items** | Paid. Substituted by collection structure + permission groups + marts-only access, which gets ~80% of the governance benefit. |
 
 ### 4.4 PII handling
 
@@ -289,13 +289,13 @@ Nothing below is decided. Recorded so the eventual decision is made against crit
 ## 5. Handover artifacts (deliverable checklist)
 
 - [ ] `invites_loop_bi` dbt project (models, tests, `dbt docs`) in git
-- [ ] `invites-loop-bi-deploy` repo (compose, env template, role SQL, backup/restore scripts)
-- [ ] Metabase running on Azure Container Apps, marts-only read-only role, permission groups configured
+- [ ] `deploy/superset/` stack (compose, env template, role SQL, dataset + dashboard scripts)
+- [ ] Superset running, marts-only read-only role, Planning-Team role configured
 - [ ] Verified backup restore (performed, not merely scripted)
-- [ ] `MB_ENCRYPTION_SECRET_KEY` stored in Key Vault and referenced in the runbook
+- [ ] `SUPERSET_SECRET_KEY` stored in Key Vault and referenced in the runbook
 - [ ] `RUNBOOK.ko.md` — 이게 안 될 때 (container restart, backup restore, resource ownership)
-- [ ] `METRICS.ko.md` — 메트릭 추가하는 법 (edit view SQL → PR → Airflow deploy → refresh in Metabase)
-- [ ] Named owner for Metabase instance and Azure resources, in writing (Q-04)
+- [ ] `METRICS.ko.md` — 메트릭 추가하는 법 (edit view SQL → PR → build → register dataset in Superset)
+- [ ] Named owner for Superset instance and Azure resources, in writing (Q-04)
 - [ ] PII inventory across all source schemas, classified identifier / quasi-identifier / analytical (Q-11)
 - [ ] JSONB extraction allow-list committed as a versioned file, with the schema-drift test wired into `dbt build` (D-26, D-27)
 

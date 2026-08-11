@@ -3,7 +3,7 @@
 --
 -- Tall, not one model per measurement type: the source tables are five
 -- different shapes carrying the same idea (a number, a unit, a time, a device),
--- and a Metabase user filtering `metric_code = 'systolic_bp'` is doing exactly
+-- and a Superset user filtering `metric_code = 'systolic_bp'` is doing exactly
 -- what a wide model would make them do with a column picker. One model also
 -- means one grain test instead of five.
 --
