@@ -43,7 +43,7 @@ The analytical bar for this project is set by work already done in
 `analysis/` and `~/AgentWorkspaces/invites_loop/bi`: Spearman rank
 correlation, Mann-Whitney U, and **OLS with covariate control**.
 
-**No GUI BI tool does any of that** — not Metabase, Superset, Lightdash or
+**No GUI BI tool does any of that** — not Superset, Lightdash or
 Grafana. So analytical depth **cannot discriminate between viewers**. It is a
 requirement on the *warehouse*, which is what decision-log line 39 said all
 along: the semantic layer lives in PostgreSQL and git, not inside the BI tool.
