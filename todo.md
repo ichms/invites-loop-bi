@@ -317,6 +317,20 @@ are sites rather than app tenants; whether overlapping active links mean "moved"
 or "both" (only 10 of 1,113 rows ever set `unlinked_dt`, so today the data
 cannot tell); and the reporting rule for a dual-affiliated user's facts.
 
+**Update 2026-08-12 — B0 is now blocked on the dev team, not just the owner.**
+The Jeju launch (2026-08-10) was handled by manually re-pointing 13 staff rows
+in production — an in-place `customer_id` UPDATE that left no history and is
+invisible to the `linked_dt` watermark — and the application turns out to
+enforce user:customer 1:1 at code level, so the schema's multi-valued
+capability is not backed by any write path. "Moved vs both" is thereby answered
+*for staff* (exclusive switching, by app constraint), but the switch times are
+unrecorded. Full findings and the seven-item request to the dev team are in
+`CLAUDE.md` § "Site affiliation is multi-valued", update of 2026-08-12. Until
+those answers land, **build nothing zone-aware**, and note for item B: the
+staff-vs-participant column must come from an owner-provided roster, never from
+`auth_user_customer` traces — two confirmed staff accounts are new hires with
+no Ulsan history at all.
+
 ### B. Extend `dim_user` — the segment attributes Frame 2 needs
 
 Still missing, and §1/§2 both turn on them:

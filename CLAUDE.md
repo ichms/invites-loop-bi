@@ -217,6 +217,10 @@ needs a field that is excluded here, that is a policy conversation, not a config
 
 ### Site affiliation is multi-valued — the Jeju problem
 
+> **Updated 2026-08-12 after the Jeju launch** — read the dated update at the
+> end of this section first. Several measurements below are superseded, and the
+> section's headline claim turned out to be only half-true.
+
 **The business need:** "this person was in Ulsan and is now *also* in Jeju." One
 person, two affiliations. Raised by the owner 2026-08-10 as "there is only one
 field but two values".
@@ -269,9 +273,73 @@ double-counts every metric for a dual-affiliated user.
    dataset — that resolves the as-of rule, or non-SQL users get wrong answers
    with no indication anything happened.
 
-Minor: JEJU's earliest `linked_dt` (2025-11-27) predates its `auth_customer`
-row (`created_dt` 2026-06-22). Check that before trusting `linked_dt` as a true
-affiliation start.
+#### Update 2026-08-12 — Jeju is live, and the premise above is only half-true
+
+Jeju operations started 2026-08-10. A patient-registration error that day was
+resolved by a developer manually re-pointing internal staff accounts from Ulsan
+to Jeju **with direct DML in production**. Diffing the source against the
+warehouse's 2026-08-05 snapshot (the last ichms load; read-only, freeze intact)
+established the following.
+
+- **13 rows of `auth_user_customer` were UPDATEd in place** — `customer_id`
+  flipped ULSAN→JEJU on the existing row, `linked_dt`/`unlinked_dt` untouched.
+  35 rows are new (Jeju registrations plus tenant pairs), none deleted. All 13
+  re-pointed users are in `dim_user`. This resolves the "Minor" anomaly that
+  used to close this section: JEJU links whose `linked_dt` (2025-11-27) predates
+  JEJU's own `created_dt` (2026-06-22) are re-pointed Ulsan-era rows. The 8/5
+  snapshot holds zero JEJU rows, so this was the first such flip. The 13 PKs
+  are recoverable any time by re-running the same diff.
+- **The actual switch time (~13:07 KST, 8/10) exists nowhere in the database.**
+  The table has no `updated_dt` and the change bypassed the application; the
+  time is known only from the dev team's message. `linked_dt` on those 13 rows
+  now lies about affiliation start.
+- **The application (1.3) enforces user:customer 1:1 at code level.** Staff
+  hold exactly one of ULSAN/JEJU at a time; testing the other site means
+  flipping, and each flip is a manual request to a developer — no admin path
+  exists ("변경요청하셔야 합니다"). So the *schema* is a temporal bridge but
+  the *write path* treats it as a scalar, and the history table accumulates
+  non-history. The headline above — "the constraint is ours, not the
+  source's" — is therefore only half-true: ours is the only stored single
+  value, but the source's single value lives in the app and its write
+  discipline. Storage capability is not data trustworthiness.
+- The 1:1 constraint does **not** force destructive writes: unlinking the old
+  row and inserting a new one keeps exactly one active zone and satisfies the
+  app unchanged. The in-place UPDATE was convenience, not necessity.
+- **Incremental extraction can never see these flips.** The table watermarks on
+  `linked_dt` alone (`ichms_targets.py`), which an in-place UPDATE does not
+  touch. On resume, `auth_user_customer` needs a full re-read — better, convert
+  it to a full-refresh target (1,137 rows, has a PK). A dbt snapshot over the
+  staging table is the only warehouse-side way to catch *future* flips, at
+  load-cadence resolution.
+- **Staff cannot be inferred from the data.** Two further staff accounts (new
+  hires, confirmed by the owner 2026-08-12) have no Ulsan history at all — JEJU
+  from their first link. At least 15 staff accounts are known, 14 of them
+  inside the analysis cohort; no source system carries a staff flag. The roster
+  must be owner-provided (a seed), never derived from re-point traces.
+- **The cohort grew during the freeze**: sibc `user_master` 404→412, iccoli
+  mapper 441→450 (measured 2026-08-12). Resuming therefore also triggers the
+  documented enrolment-wave procedure — delete the iccoli watermark rows to
+  force a full, idempotent re-read.
+- **No mart or metric view reads zone today.** `dim_user.site_id` and
+  `dim_deployment_site` are hardcoded literals and nothing else references
+  site. Resuming EL changes no published number *by zone*; the
+  current-value-vs-as-of hazard begins with the first zone-aware view.
+
+**Blocked on the dev team — request sent 2026-08-12,** seven items: (1) which
+`auth_customer` rows are zones (a type column or an owned list); (2) the target
+cardinality of user:zone — the app says 1:1, the schema says M:N, the owner's
+stated need is "both at once", and this decision is upstream of all warehouse
+zone modelling; (3) unlink+insert write discipline for manual flips; (4)
+notification of any manual production DML, plus the list of tables it touches;
+(5) the app's read rule when multiple active links exist; (6) whether the 13
+rows will be backfilled at the source; (7) how staff accounts are identified.
+
+**Until those answers land, any work needing zone semantics is out of scope
+and must be excluded rather than improvised**: the bridge mart, a real
+`dim_deployment_site` (its hardcoded single row is deliberate, not a load
+error — see its header), zone-segmented metrics, and the site axis of the
+todo.md item-B cohort column. BI must not invent write-contract semantics the
+product does not define.
 
 ## Testing
 
