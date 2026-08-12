@@ -3,9 +3,10 @@
 from datetime import datetime
 
 from invites_loop_bi.extract.introspect import Column, TableSchema
+from invites_loop_bi.extract.watermark import WatermarkStore
 
 
-class StubWatermarkManager:
+class StubWatermarkManager(WatermarkStore):
 	"""A `WatermarkManager` that keeps its state in memory."""
 
 	def __init__(self, watermark: datetime | None = None):

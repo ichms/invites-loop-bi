@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from invites_loop_bi.config import SOURCE_SYSTEMS, get_extraction_targets
 from invites_loop_bi.config.settings import check_timezone_alignment
 from invites_loop_bi.connections import open_connections
-from invites_loop_bi.extract import WatermarkManager, build_extractor
+from invites_loop_bi.extract import WatermarkManager, WatermarkStore, build_extractor
 from invites_loop_bi.load import StagingLoader
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ def run_table(
 	target: dict,
 	*,
 	loader: StagingLoader | None = None,
-	watermark_manager: WatermarkManager | None = None,
+	watermark_manager: WatermarkStore | None = None,
 	overlap: timedelta = timedelta(0),
 	upper_bound: datetime | None = None,
 ) -> TableRunResult:

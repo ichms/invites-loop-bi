@@ -83,6 +83,7 @@ def test_a_targets_lookback_days_widens_the_window():
 		},
 		watermark_manager=StubWatermarkManager(WATERMARK),
 	)
+	assert isinstance(extractor, IncrementalExtractor)
 	extractor._source_table = table_schema()
 	assert extractor.overlap == timedelta(days=30)
 	assert extractor.plan().params == (WATERMARK - timedelta(days=30),)
@@ -128,12 +129,14 @@ def test_a_declared_lookback_is_never_narrowed_by_the_run_level_overlap():
 		None, source_system="discovery", target=target, overlap=timedelta(minutes=5),
 		watermark_manager=StubWatermarkManager(WATERMARK),
 	)
+	assert isinstance(narrower, IncrementalExtractor)
 	assert narrower.overlap == timedelta(days=30), "an operator's 5 minutes must not shrink a declared 30 days"
 
 	wider = build_extractor(
 		None, source_system="discovery", target=target, overlap=timedelta(days=90),
 		watermark_manager=StubWatermarkManager(WATERMARK),
 	)
+	assert isinstance(wider, IncrementalExtractor)
 	assert wider.overlap == timedelta(days=90), "an operator asking for more must still get it"
 
 
@@ -149,6 +152,7 @@ def test_a_target_without_a_lookback_keeps_the_run_level_overlap():
 		overlap=timedelta(minutes=5),
 		watermark_manager=StubWatermarkManager(WATERMARK),
 	)
+	assert isinstance(extractor, IncrementalExtractor)
 	assert extractor.overlap == timedelta(minutes=5)
 
 
@@ -179,11 +183,15 @@ def test_excluded_columns_never_reach_the_query():
 	)
 
 	original = extractor_module.describe_table
-	extractor_module.describe_table = lambda conn, schema, table: table_schema()
+
+	def fake_describe(conn, schema_name: str, table_name: str):
+		return table_schema()
+
+	setattr(extractor_module, "describe_table", fake_describe)
 	try:
 		plan = extractor.plan()
 	finally:
-		extractor_module.describe_table = original
+		setattr(extractor_module, "describe_table", original)
 
 	assert '"payload"' not in plan.query
 	assert "payload" not in plan.source_table.column_names

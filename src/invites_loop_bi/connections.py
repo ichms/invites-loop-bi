@@ -41,10 +41,12 @@ def connect(conn_id: str, *, readonly: bool = False):
 		logger.debug("No AIRFLOW_CONN_%s in the environment; falling back to PostgresHook", conn_id.upper())
 		conn = PostgresHook(postgres_conn_id=conn_id).get_conn()
 
-	conn.autocommit = False
+	# PostgresHook may hand back CompatConnection; both paths are psycopg2-shaped.
+	# setattr/getattr keep the checker off the union without a catch-all type.
+	setattr(conn, "autocommit", False)
 	if readonly:
 		# Belt and braces: the pipeline must never write to a source database.
-		conn.set_session(readonly=True)
+		getattr(conn, "set_session")(readonly=True)
 	return conn
 
 

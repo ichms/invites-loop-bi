@@ -25,6 +25,7 @@ def load_dags():
 		skip("apache-airflow is not installed")
 
 	spec = importlib.util.spec_from_file_location("elt_to_staging_under_test", DAG_FILE)
+	assert spec is not None and spec.loader is not None
 	module = importlib.util.module_from_spec(spec)
 	spec.loader.exec_module(module)
 	return {dag.dag_id: dag for dag in vars(module).values() if isinstance(dag, DAG)}

@@ -88,7 +88,7 @@ class TableNotFound(LookupError):
 	"""Raised by `describe_table` when the relation is not in the catalog."""
 
 
-def quote_ident(name: str) -> str:
+def quote_ident(name: object) -> str:
 	"""
 	Quote a schema / table / column name.
 

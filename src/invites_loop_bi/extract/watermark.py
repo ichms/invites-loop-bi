@@ -4,7 +4,37 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class WatermarkManager():
+class WatermarkStore:
+	"""
+	What the extractor needs from watermark bookkeeping.
+
+	`WatermarkManager` is the real implementation; tests supply an in-memory stub
+	with the same three methods.
+	"""
+
+	def get_last_watermark(
+		self, source_system: str, schema_name: str, table_name: str
+	) -> datetime | None:
+		raise NotImplementedError
+
+	def update_watermark(
+		self,
+		source_system: str,
+		schema_name: str,
+		table_name: str,
+		new_watermark: datetime,
+		status: str = "SUCCESS",
+		row_count: int | None = None,
+	) -> None:
+		raise NotImplementedError
+
+	def mark_failed(
+		self, source_system: str, schema_name: str, table_name: str, error: str | None = None
+	) -> None:
+		raise NotImplementedError
+
+
+class WatermarkManager(WatermarkStore):
 	"""
 	Through the metadata table in the staging database (`stg_meta.watermarks`),
 	watermark timestamps are queried and updated for each source and schema.

@@ -30,12 +30,11 @@ Usage from a DAG / the pipeline:
 
 from __future__ import annotations
 
+import io
 import logging
 import tempfile
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import IO, Any
 
 from invites_loop_bi.config import (
 	LOAD_TYPE_FULL_REFRESH,
@@ -43,7 +42,7 @@ from invites_loop_bi.config import (
 	get_extraction_targets,
 )
 from invites_loop_bi.extract.introspect import TableSchema, describe_table, quote_ident
-from invites_loop_bi.extract.watermark import WatermarkManager
+from invites_loop_bi.extract.watermark import WatermarkManager, WatermarkStore
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,7 @@ class ExtractionPlan:
 	#: Column list / primary key of the source table, read from its catalog.
 	source_table: TableSchema
 	query: str
-	params: tuple[Any, ...]
+	params: tuple[object, ...]
 	#: The WHERE body of `query` (without the keyword), or None for a full read.
 	#: The loader replays it against staging to delete exactly the window it is
 	#: about to insert, which is how a table without a primary key stays
@@ -97,7 +96,8 @@ class ExtractionResult:
 	"""
 
 	plan: ExtractionPlan
-	csv: IO[bytes]
+	#: Binary file-like (SpooledTemporaryFile in production, BytesIO in tests).
+	csv: io.BytesIO | tempfile.SpooledTemporaryFile
 	row_count: int
 	byte_count: int
 	extracted_at: datetime
@@ -159,7 +159,7 @@ class BaseExtractor:
 		exclude_columns: tuple[str, ...] = (),
 		row_filter: str | None = None,
 		spool_max_bytes: int = DEFAULT_SPOOL_MAX_BYTES,
-		watermark_manager: WatermarkManager | None = None,
+		watermark_manager: WatermarkStore | None = None,
 	):
 		# 1. Source DB connection for data extraction (Read-Only)
 		self.source_conn = source_conn
@@ -236,7 +236,7 @@ class BaseExtractor:
 		"""
 		plan = self.plan(upper_bound)
 		extracted_at = self.source_now()
-		buffer: IO[bytes] = tempfile.SpooledTemporaryFile(max_size=self.spool_max_bytes)
+		buffer = tempfile.SpooledTemporaryFile(max_size=self.spool_max_bytes)
 
 		try:
 			with self.source_conn.cursor() as cursor:
@@ -372,7 +372,7 @@ class IncrementalExtractor(BaseExtractor):
 		row_filter: str | None = None,
 		spool_max_bytes: int = DEFAULT_SPOOL_MAX_BYTES,
 		overlap: timedelta = timedelta(0),
-		watermark_manager: WatermarkManager | None = None,
+		watermark_manager: WatermarkStore | None = None,
 	):
 		super().__init__(
 			source_conn,
@@ -415,7 +415,7 @@ class IncrementalExtractor(BaseExtractor):
 		last_wm = self.wm_manager.get_last_watermark(self.source_system, self.schema_name, self.table_name)
 
 		conditions: list[str] = []
-		params: list[Any] = []
+		params: list[object] = []
 
 		if last_wm is not None:
 			conditions.append(f"{self.watermark_expr} > %s")
@@ -509,11 +509,11 @@ def build_extractor(
 	source_conn,
 	meta_conn=None,
 	source_system: str = "",
-	target: Mapping[str, Any] | None = None,
+	target: dict | None = None,
 	*,
 	spool_max_bytes: int = DEFAULT_SPOOL_MAX_BYTES,
 	overlap: timedelta = timedelta(0),
-	watermark_manager: WatermarkManager | None = None,
+	watermark_manager: WatermarkStore | None = None,
 ) -> BaseExtractor:
 	"""Build the extractor a single normalised config target asks for."""
 	if target is None:
@@ -521,22 +521,25 @@ def build_extractor(
 
 	source_system = target.get("source_system", source_system)
 	load_type = target.get("load_type", LOAD_TYPE_INCREMENTAL)
-	common = dict(
-		source_conn=source_conn,
-		meta_conn=meta_conn,
-		source_system=source_system,
-		schema_name=target["schema_name"],
-		table_name=target["table_name"],
-		exclude_columns=tuple(target.get("exclude_columns") or ()),
-		row_filter=target.get("row_filter"),
-		spool_max_bytes=spool_max_bytes,
-		watermark_manager=watermark_manager,
-	)
+	schema_name = target["schema_name"]
+	table_name = target["table_name"]
+	exclude_columns = tuple(target.get("exclude_columns") or ())
+	row_filter = target.get("row_filter")
 
 	if load_type == LOAD_TYPE_FULL_REFRESH:
-		return FullRefreshExtractor(**common)
+		return FullRefreshExtractor(
+			source_conn,
+			meta_conn,
+			source_system=source_system,
+			schema_name=schema_name,
+			table_name=table_name,
+			exclude_columns=exclude_columns,
+			row_filter=row_filter,
+			spool_max_bytes=spool_max_bytes,
+			watermark_manager=watermark_manager,
+		)
 	if load_type != LOAD_TYPE_INCREMENTAL:
-		raise ValueError(f"Unknown load_type {load_type!r} for {target['schema_name']}.{target['table_name']}")
+		raise ValueError(f"Unknown load_type {load_type!r} for {schema_name}.{table_name}")
 
 	# A table's declared `lookback_days` is a correctness requirement (the source
 	# backdates its watermark), while the run-level `overlap` is an operator's
@@ -546,10 +549,18 @@ def build_extractor(
 	table_overlap = overlap if lookback_days is None else max(overlap, timedelta(days=lookback_days))
 
 	return IncrementalExtractor(
-		**common,
+		source_conn,
+		meta_conn,
+		source_system=source_system,
+		schema_name=schema_name,
+		table_name=table_name,
 		watermark_col=target["watermark_col"],
 		fallback_watermark_col=target.get("fallback_watermark_col"),
+		exclude_columns=exclude_columns,
+		row_filter=row_filter,
+		spool_max_bytes=spool_max_bytes,
 		overlap=table_overlap,
+		watermark_manager=watermark_manager,
 	)
 
 
@@ -558,7 +569,7 @@ def build_extractors(
 	meta_conn,
 	source_system: str,
 	*,
-	targets: list[Mapping[str, Any]] | None = None,
+	targets: list[dict] | None = None,
 	spool_max_bytes: int = DEFAULT_SPOOL_MAX_BYTES,
 	overlap: timedelta = timedelta(0),
 ) -> list[BaseExtractor]:
@@ -568,7 +579,7 @@ def build_extractors(
 	All extractors share a single `WatermarkManager` (and therefore a single
 	metadata connection), so the `stg_meta.watermarks` bootstrap runs once.
 	"""
-	targets = get_extraction_targets(source_system) if targets is None else targets
+	resolved = get_extraction_targets(source_system) if targets is None else targets
 	watermark_manager = WatermarkManager(meta_db_conn=meta_conn)
 
 	return [
@@ -580,5 +591,5 @@ def build_extractors(
 			overlap=overlap,
 			watermark_manager=watermark_manager,
 		)
-		for target in targets
+		for target in resolved
 	]

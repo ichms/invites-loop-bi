@@ -119,6 +119,7 @@ def test_run_source_system_keeps_going_after_a_bad_table():
 		assert len(results) == 2
 		assert results[0].ok, "the healthy table should still have loaded"
 		assert not results[1].ok
+		assert results[1].error is not None
 		assert "tb_does_not_exist" in results[1].error
 
 

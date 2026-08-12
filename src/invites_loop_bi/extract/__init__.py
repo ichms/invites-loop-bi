@@ -18,7 +18,7 @@ from invites_loop_bi.extract.introspect import (
 	describe_table,
 	quote_ident,
 )
-from invites_loop_bi.extract.watermark import WatermarkManager
+from invites_loop_bi.extract.watermark import WatermarkManager, WatermarkStore
 
 __all__ = [
 	"COPY_BUFFER_SIZE",
@@ -32,6 +32,7 @@ __all__ = [
 	"TableNotFound",
 	"TableSchema",
 	"WatermarkManager",
+	"WatermarkStore",
 	"build_extractor",
 	"build_extractors",
 	"describe_table",

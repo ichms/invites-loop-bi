@@ -200,13 +200,16 @@ def main():
 			print(f"created  {name}")
 
 	# Layout: HEADER + markdown notes row + LAYOUT rows.
+	# Keep direct references to the mutable `children` lists — indexing back
+	# through `pos` loses the list type once the dict holds mixed values.
 	pos = {
 		"DASHBOARD_VERSION_KEY": "v2",
 		"ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
 		"HEADER_ID": {"type": "HEADER", "id": "HEADER_ID", "meta": {"text": DASHBOARD_TITLE}},
-		"GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": [], "parents": ["ROOT_ID"]},
 	}
-	pos["GRID_ID"]["children"].append("ROW-notes")
+	grid_children: list[str] = []
+	pos["GRID_ID"] = {"type": "GRID", "id": "GRID_ID", "children": grid_children, "parents": ["ROOT_ID"]}
+	grid_children.append("ROW-notes")
 	pos["ROW-notes"] = {"type": "ROW", "id": "ROW-notes", "children": ["MARKDOWN-notes"],
 		"parents": ["ROOT_ID", "GRID_ID"], "meta": {"background": "BACKGROUND_TRANSPARENT"}}
 	pos["MARKDOWN-notes"] = {"type": "MARKDOWN", "id": "MARKDOWN-notes", "children": [],
@@ -215,12 +218,13 @@ def main():
 
 	for i, row in enumerate(LAYOUT):
 		row_id = f"ROW-{i}"
-		pos["GRID_ID"]["children"].append(row_id)
-		pos[row_id] = {"type": "ROW", "id": row_id, "children": [],
+		grid_children.append(row_id)
+		row_children: list[str] = []
+		pos[row_id] = {"type": "ROW", "id": row_id, "children": row_children,
 			"parents": ["ROOT_ID", "GRID_ID"], "meta": {"background": "BACKGROUND_TRANSPARENT"}}
 		for name, width in row:
 			cid = f"CHART-{chart_ids[name]}"
-			pos[row_id]["children"].append(cid)
+			row_children.append(cid)
 			pos[cid] = {"type": "CHART", "id": cid, "children": [],
 				"parents": ["ROOT_ID", "GRID_ID", row_id],
 				"meta": {"chartId": chart_ids[name], "sliceName": name,

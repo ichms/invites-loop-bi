@@ -117,6 +117,9 @@ def test_autocommit_connection_is_rejected():
 
 
 def make_result(schema, *, predicate=None, params=(), load_type="incremental"):
+	from datetime import datetime, timezone
+	from io import BytesIO
+
 	from invites_loop_bi.extract import ExtractionPlan, ExtractionResult
 
 	plan = ExtractionPlan(
@@ -131,7 +134,15 @@ def make_result(schema, *, predicate=None, params=(), load_type="incremental"):
 		watermark_expr='"update_datetime"',
 		watermark_from=None,
 	)
-	return ExtractionResult(plan=plan, csv=None, row_count=1, byte_count=1, extracted_at=None)
+	# csv / extracted_at are unused by the SQL-generation callers; fill with
+	# stand-ins so the dataclass stays correctly typed.
+	return ExtractionResult(
+		plan=plan,
+		csv=BytesIO(),
+		row_count=1,
+		byte_count=1,
+		extracted_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+	)
 
 
 def test_keyless_incremental_merge_is_a_plain_insert():

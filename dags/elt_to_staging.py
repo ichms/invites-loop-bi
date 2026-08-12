@@ -55,6 +55,11 @@ DEFAULT_ARGS = {
 }
 
 
+def _set_map_index_name(context, table_name: str) -> None:
+	"""Write the mapped-task label into Airflow's runtime context."""
+	context["table_name"] = table_name
+
+
 def build_dag(source_system: str):
 	@dag(
 		dag_id=f"elt_{source_system}_to_staging",
@@ -77,8 +82,9 @@ def build_dag(source_system: str):
 		@task(map_index_template="{{ table_name }}")
 		def extract_and_load(target: dict) -> dict:
 			# Name the mapped task after its table instead of an index.
-			context = get_current_context()
-			context["table_name"] = target["table_name"]
+			# Airflow's context type is closed; map_index_template still reads
+			# this key from the runtime context dict.
+			_set_map_index_name(get_current_context(), target["table_name"])
 
 			with open_connections(source_system) as (source_conn, warehouse_conn):
 				result = run_table(source_conn, warehouse_conn, source_system, target, overlap=OVERLAP)

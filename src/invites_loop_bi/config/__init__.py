@@ -73,7 +73,7 @@ LOAD_TYPE_INCREMENTAL = "incremental"
 LOAD_TYPE_FULL_REFRESH = "full_refresh"
 
 #: Watermark based targets, keyed by source system.
-EXTRACTION_TARGETS = {
+EXTRACTION_TARGETS: dict[str, list[dict]] = {
 	"iccoli": ICCOLI_EXTRACTION_TARGETS,
 	"ichms": ICHMS_EXTRACTION_TARGETS,
 	"sibc": SIBC_EXTRACTION_TARGETS,
@@ -82,7 +82,7 @@ EXTRACTION_TARGETS = {
 }
 
 #: Truncate & reload targets, keyed by source system.
-FULL_REFRESH_TARGETS = {
+FULL_REFRESH_TARGETS: dict[str, list[dict]] = {
 	"iccoli": ICCOLI_FULL_REFRESH_TARGETS,
 	"ichms": ICHMS_FULL_REFRESH_TARGETS,
 	"sibc": SIBC_FULL_REFRESH_TARGETS,
