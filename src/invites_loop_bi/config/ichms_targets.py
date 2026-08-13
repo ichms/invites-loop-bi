@@ -35,12 +35,6 @@ ICHMS_EXTRACTION_TARGETS = [
 	},
 	{
 		"schema_name": "ichms",
-		"table_name": "auth_user_customer",
-		"watermark_col": "linked_dt",
-		"fallback_watermark_col": None,
-	},
-	{
-		"schema_name": "ichms",
 		"table_name": "auth_user_login_history",
 		"watermark_col": "login_dt",
 		"fallback_watermark_col": None,
@@ -104,6 +98,15 @@ ICHMS_EXTRACTION_TARGETS = [
 ]
 
 ICHMS_FULL_REFRESH_TARGETS = [
+	{
+		# In-place customer_id UPDATEs (Jeju staff re-points, 2026-08-10) do not
+		# touch linked_dt, so an incremental watermark on linked_dt never sees
+		# them. 1,137 rows and a PK -- truncate-and-reload is cheaper than a
+		# dbt snapshot and is the only extract that catches future flips.
+		"schema_name": "ichms",
+		"table_name": "auth_user_customer",
+		"load_type": "full_refresh",
+	},
 	{
 		"schema_name": "ichms",
 		"table_name": "com_code",

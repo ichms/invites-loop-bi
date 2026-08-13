@@ -11,17 +11,17 @@ models:
       SCD1 user dimension. Population = the sibc cohort (N-02), 404 rows.
       is_mapped flags cohort members with no iccoli link so they keep their
       facts instead of being orphaned. No name, no DOB, no static age.
+      Frame 2 attributes (bmi_band, cohort_group, is_observable_*) live here
+      so multi-angle segment moderation is a filter, not a project.
     columns:
       - name: user_id
         data_tests: [not_null, unique]
       - name: site_id
-        description: >-
-          NOT A REAL AFFILIATION — a hardcoded constant, identical for all 404 users.
-          Do not group, filter or segment by it; it tells you nothing. Real per-user site
-          links exist in stg_ichms.auth_user_customer (all 404 resolve to ULSAN) but are
-          deliberately not read here, because affiliation is many-to-many — one person can
-          be in Ulsan and also in Jeju — and a single column cannot hold that. See CLAUDE.md
-          "Site affiliation is multi-valued".
+        description: >
+          Current Ulsan/Jeju site from the one active approved
+          auth_user_customer link. SCD1 current state only: in-place source
+          updates erase the previous site and actual switch time, so this must
+          not be used for historical/as-of attribution.
         data_tests:
           - not_null
           - relationships:
@@ -34,6 +34,65 @@ models:
           - null_rate_below:
               arguments: {max_null_rate: 0.05}
       - name: is_mapped
+        data_tests: [not_null]
+      - name: weight_kg
+        description: >
+          Enrolment-time weight (kg) from user_master. Zero upstream becomes
+          null. Not a longitudinal series — those are in fct_measurement.
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.02}
+      - name: height_cm
+        description: Enrolment-time height (cm). Zero upstream becomes null.
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.02}
+      - name: bmi
+        description: weight_kg / (height_cm/100)^2. Null when either input is null.
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.02}
+      - name: bmi_band
+        description: >
+          Asia-Pacific cutoffs (underweight <18.5, normal <23, overweight <25,
+          obese ≥25). §2.5: BMI is non-monotonic and age-confounded — never
+          interpret a BMI slice alone.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [underweight, normal, overweight, obese]
+              config:
+                where: "bmi_band is not null"
+      - name: cohort_group
+        description: >
+          staff | participant. From the staff_roster seed, not from behavioural
+          traces. Contrast is "participation contract vs none" (§1.5), not
+          voluntary vs involuntary. Seed was bootstrapped from wellness-mission
+          absence and needs owner confirmation for new hires.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [staff, participant]
+      - name: is_observable_app_login
+        data_tests: [not_null]
+      - name: is_observable_routine
+        description: Ever had a routine delivered (in the coaching engine at all).
+        data_tests: [not_null]
+      - name: is_observable_manual_measurement
+        data_tests: [not_null]
+      - name: is_observable_meal
+        data_tests: [not_null]
+      - name: is_observable_wearable
+        description: >
+          Ever produced any wearable stream day (step-inclusive union — see
+          stg_discovery__lifelog_wearable_day). Quote counts with extraction date.
+        data_tests: [not_null]
+      - name: is_observable_wearable_and_routine
+        description: >
+          §2.4 intersection: wearable ever AND lifetime routine completion
+          rate ≥ 50%. The structural finding that behaviour-exposure and
+          physiology populations diverge by age.
         data_tests: [not_null]
 
   - name: dim_date
@@ -53,15 +112,21 @@ models:
         data_tests: [not_null]
 
   - name: dim_deployment_site
-    description: >-
-      One row, a placeholder code — see the model header. Multi-site is no longer
-      hypothetical: ichms.auth_customer already holds 울산 and 제주, and a person can hold
-      both at once. This dim is not yet sourced from it because that table mixes deployment
-      sites with application tenants (LIS, 아이콜리, iCHMS Web), and classifying them is an
-      owner rule. See CLAUDE.md "Site affiliation is multi-valued".
+    description: >
+      Owner-approved Ulsan and Jeju deployment sites from ichms.auth_customer.
+      Application-tenant customer rows are deliberately excluded by UUID.
     columns:
       - name: site_id
         data_tests: [not_null, unique]
+      - name: site_name_kor
+        data_tests: [not_null]
+      - name: site_name_eng
+        data_tests: [not_null]
+      - name: country_code
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['KR']}
 
   - name: dim_action
     description: App-action catalogue behind fct_app_action.
@@ -140,6 +205,231 @@ models:
                 field: device_type_code
               config:
                 where: "device_type_id is not null"
+
+  - name: fct_wearable_day
+    description: >
+      GRAIN: user × day, sparse — only days any wearable stream fired. Daily
+      step / sleep / activity / heart-rate / SpO2 intensity. NULL on a present
+      row means that stream did not fire, not zero. Quote counts with extraction
+      date (wearables backfill ~30 days).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, ymd_date]
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: ymd_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: step_count
+        description: Sum of step_cnt that day. NULL if the step stream did not fire.
+      - name: sleep_hours
+        description: >
+          Sum of session durations dated from total_measure_start_dt (KST).
+          Overnight sessions that span midnight sit on the start date.
+      - name: heartrate_mean
+        description: Mean of heartrate_cnt samples that day. NULL if HR did not fire.
+      - name: spo2_mean
+        description: Mean oxygen_saturation that day. NULL if SpO2 did not fire.
+
+  - name: fct_wearable_step
+    description: >
+      GRAIN: one distinct source step observation. Exact duplicate payloads
+      collapse, while source_row_count preserves their multiplicity.
+    columns:
+      - name: observation_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: measured_at
+        data_tests: [not_null]
+      - name: measured_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+      - name: device_type_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_device_type'), field: device_type_code}
+              config: {where: "device_type_id is not null"}
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: fct_wearable_activity
+    description: "GRAIN: one distinct source activity interval observation."
+    columns:
+      - name: observation_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: measured_at
+        data_tests: [not_null]
+      - name: measured_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+      - name: device_type_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_device_type'), field: device_type_code}
+              config: {where: "device_type_id is not null"}
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: fct_wearable_heartrate
+    description: >
+      GRAIN: one distinct source heart-rate observation. Different values in the
+      same timestamp/type slot remain separate observations.
+    columns:
+      - name: observation_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: measured_at
+        data_tests: [not_null]
+      - name: measured_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+      - name: heartrate_count
+        data_tests: [not_null]
+      - name: device_type_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_device_type'), field: device_type_code}
+              config: {where: "device_type_id is not null"}
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: fct_wearable_oxygen_saturation
+    description: "GRAIN: one distinct source oxygen-saturation observation."
+    columns:
+      - name: observation_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: measured_at
+        data_tests: [not_null]
+      - name: measured_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+      - name: oxygen_saturation
+        data_tests: [not_null]
+      - name: device_type_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_device_type'), field: device_type_code}
+              config: {where: "device_type_id is not null"}
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: fct_wearable_sleep
+    description: >
+      GRAIN: one distinct source sleep session. Sessions are dated from their
+      KST start date, matching fct_wearable_day.
+    columns:
+      - name: observation_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: started_at
+        data_tests: [not_null]
+      - name: started_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+      - name: user_sleep_sn
+        data_tests: [not_null, unique]
+      - name: device_type_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_device_type'), field: device_type_code}
+              config: {where: "device_type_id is not null"}
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: fct_wearable_sleep_stage
+    description: >
+      GRAIN: one distinct source sleep-stage interval, attributed through its
+      sleep session. Includes all extracted sleep-detail observations.
+    columns:
+      - name: observation_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: started_at
+        data_tests: [not_null]
+      - name: started_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+      - name: sleep_stage_code
+        data_tests: [not_null]
+      - name: user_sleep_sn
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('fct_wearable_sleep'), field: user_sleep_sn}
+      - name: device_type_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_device_type'), field: device_type_code}
+              config: {where: "device_type_id is not null"}
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
 
   - name: fct_coaching_event
     description: >
@@ -338,6 +628,57 @@ models:
           sat at its ceiling, and one summed "engagement" number hides that.
         data_tests: [not_null]
       - name: had_passive_collection
+        data_tests: [not_null]
+
+  - name: fct_user_day_wide
+    description: >
+      GRAIN: user × ymd — same dense panel as fct_user_day, with Frame 2
+      segment columns and calendar helpers pre-joined for Superset (HOWTO.md
+      §3 Option A). Filter on sex / bmi_band / cohort_group /
+      is_observable_* / months_since_joined without writing a join. Do not
+      put new measure logic here — extend fct_user_day, then this follows.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [user_id, ymd_date]
+    columns:
+      - name: user_id
+        data_tests: [not_null]
+      - name: ymd_date
+        data_tests: [not_null]
+      - name: sex
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.01}
+      - name: bmi_band
+        description: >
+          Asia-Pacific band from dim_user. Null for 3 users with zero
+          height/weight upstream. Never interpret BMI slices alone (§2.5).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [underweight, normal, overweight, obese]
+              config:
+                where: "bmi_band is not null"
+      - name: cohort_group
+        description: >
+          staff | participant from staff_roster. Contrast is participation
+          contract vs none (§1.5), not voluntary vs involuntary.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [staff, participant]
+      - name: is_observable_wearable
+        data_tests: [not_null]
+      - name: is_observable_wearable_and_routine
+        description: §2.4 intersection — wearable ever AND routine completion ≥50%.
+        data_tests: [not_null]
+      - name: week_start_date
+        data_tests: [not_null]
+      - name: months_since_joined
+        data_tests: [not_null]
+      - name: app_login_events
         data_tests: [not_null]
 
   - name: fct_user_disease_day

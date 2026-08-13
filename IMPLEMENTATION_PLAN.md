@@ -301,6 +301,12 @@ then remaining facts; **never** the grain tests).
       the fact collapses them by earliest transaction, and
       `assert_measurement_no_conflicting_readings` **fails the build** if the collapsed rows
       ever disagree in value.
+- [x] **2026-08-13 follow-on:** six source-shaped `fct_wearable_*` observation facts,
+      including sleep-detail intervals. They remain separate from `fct_measurement` because
+      point, interval and session sources have incompatible grains, and separate from
+      `fct_wearable_day`, which remains the daily reporting aggregate. Exact duplicate
+      payloads collapse with multiplicity retained in `source_row_count`; attribution and
+      source-row reconciliation are build tests (D-31).
 - [x] `fct_app_action` (256,904 rows) — the one fact needing Q-10 key translation, already
       done in its staging model.
 - [x] `transform_dbt_build` DAG: `dbt source freshness` (non-blocking — a stale source must be
@@ -311,9 +317,12 @@ then remaining facts; **never** the grain tests).
       **Correction 2026-08-07:** declaring a schedule is all that happened. No scheduler is
       deployed, the five ELT DAGs are paused, and `transform_dbt_build` has never been parsed
       by a scheduler — so none of these have ever fired. See `todo.md` §3; it is Q-13.
-- [x] `dbt docs generate --static` → `dbt/docs/dbt_docs.html`, committed (Q-07). Note: the
-      root `.gitignore` had an unanchored `docs/` rule that also swallowed `dbt/docs/`; it is
-      now root-anchored (`/docs/`).
+- [x] `dbt docs generate --static` (Q-07). Originally committed as
+      `dbt/docs/dbt_docs.html`; as of 2026-08-13 generate locally
+      (`uv run dbt docs generate --project-dir dbt --static`) and open
+      `dbt/target/static_index.html` — see `README.md`. Note: the root
+      `.gitignore` had an unanchored `docs/` rule that also swallowed
+      `dbt/docs/`; it is now root-anchored (`/docs/`).
 
 ### Phase 4 — Superset, locally (Days 8–10) — **DONE 2026-08-11 except the restore drill**
 
@@ -419,5 +428,5 @@ then remaining facts; **never** the grain tests).
 | **NEW: dim_disease row count** | **Reconciled 2026-08-06:** all 35 catalog diseases are scored, plus exactly 9 scored-but-not-displayed extras (macular degeneration, brain aneurysm, cardiac arrhythmia, endometrial cancer, endometriosis, hepatocellular carcinoma, lung cancer, Parkinson's, PCOS). Owner: focus stays on the 35 — `dim_disease` seeds from the catalog; fact rows for the 9 simply don't join to the dim and are not user-facing |
 | **NEW: no CREATEROLE credential** | **Resolved 2026-08-06:** admin granted `analytics_user` CREATEROLE; `superset_reader` created and verified. Residual: `public` still carries a `PUBLIC` USAGE grant that only an admin can revoke — asserted empty and non-writable instead |
 | **NEW: glucose unit ambiguity** | **Resolved 2026-08-06:** owner chose normalisation to mg/dL; `<30 → ×18.0182` in staging, guarded by `assert_glucose_unit_gap_holds`. A per-row unit from the source would still be better than a threshold — worth raising with the Discovery team |
-| **NEW: deployment site code** | `dim_deployment_site.site_id = 'KR_LOOP_PILOT'` is a placeholder — no source carries a site id. Confirm before it appears as a dashboard label |
+| **NEW: deployment site code** | **Resolved for current state 2026-08-13:** owner-approved Ulsan/Jeju customer UUIDs feed `dim_deployment_site` and the one active link feeds `dim_user.site_id`. Historical/as-of attribution remains blocked because in-place flips erase prior site and switch time |
 | **NEW: `login_pw` in warehouse** | **Resolved 2026-08-06:** owner decided to discard the direct-identifier classes; `scripts/20260806_pii_cleanup_phase1.sql` (executed) dropped 26 columns across ichms/sibc/iccoli and stripped name keys from frozen legacy payloads; matching `exclude_columns` added to all three target configs. Remaining open items in PII_INVENTORY.md §Resolution status (ichms table-scope question, R-7, R-8, upstream `user_name` key) |

@@ -11,7 +11,8 @@
 --   heartrate     8.5M continuous samples over 17k transactions. This is the
 --                 bimodal-density problem the decision log names; mixing a
 --                 sampling stream into a fact of discrete readings makes every
---                 unqualified count meaningless. Needs its own aggregate model.
+--                 unqualified count meaningless. It has source-grain
+--                 fct_wearable_heartrate plus the fct_wearable_day aggregate.
 --   oxygen_sat    60k samples, same shape as heartrate.
 --   sleep,
 --   activity,

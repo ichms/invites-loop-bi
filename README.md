@@ -12,7 +12,7 @@ A config-driven **ELT** pipeline that extracts operational data from five Postgr
 - **Ensures consistency**: one place where a metric is defined, in git, reviewable.
 - **Optimizes performance**: moves rows as `COPY ... CSV` bytes between PostgreSQL instances, never materializing them in Python.
 
-**Status:** all five phases are complete. `dbt build` **211/211**, `pytest` **117/117**. Extract → load → transform → marts → metric views → Superset all work — **when invoked by hand**. Nothing runs unattended yet; no Airflow scheduler is deployed (see [`todo.md`](todo.md) §3).
+**Status:** all five phases are complete. `dbt build` **388/388**, `pytest` **125/125**. Extract → load → transform → marts → metric views → Superset all work — **when invoked by hand**. Nothing runs unattended yet; no Airflow scheduler is deployed (see [`todo.md`](todo.md) §3).
 
 Architecture in depth: [`CLAUDE.md`](CLAUDE.md). Decisions and rejected options: [`INVITES_LOOP_BI_DECISION_LOG.md`](INVITES_LOOP_BI_DECISION_LOG.md). Where measurement overruled the plan: [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) §3. Operational recipes: [`HOWTO.md`](HOWTO.md).
 
@@ -39,7 +39,7 @@ That second requirement is why `fct_user_day` is a **dense** panel. See [Analysi
 - **Three idempotent load strategies**: upsert on the primary key, truncate-and-reload for reference tables, and delete-the-window-then-insert for keyless sources. Re-running any load is safe.
 - **Crash-safe by construction**: the watermark advances *only after* rows are committed to staging, so a failure replays the same window instead of skipping it.
 - **Data minimisation at the EL boundary**: direct identifiers are never extracted, and user-keyed `iccoli` tables carry a cohort row filter, so non-cohort users never leave the source system.
-- **dbt transform layer**: staging views, six dimensions, five facts with grain and FK tests, and metric views — all tested on every build.
+- **dbt transform layer**: staging views, six dimensions, twelve facts with grain and FK tests, and metric views — all tested on every build.
 
 ---
 
@@ -54,10 +54,10 @@ invites-loop-bi/
 │   ├── models/
 │   │   ├── staging/                # dedupe, casts, user_no→user_id, JSONB allow-list
 │   │   └── marts/
-│   │       ├── dim_*.sql fct_*.sql # 6 dims, 5 facts, grain + FK tests
+│   │       ├── dim_*.sql fct_*.sql # 6 dims, 12 facts, grain + FK tests
 │   │       └── metrics/            # v_pi_* / v_bridge_* — the quotable numbers
 │   ├── tests/                      # singular tests, incl. spine reconciliation
-│   └── docs/dbt_docs.html          # committed lineage + column docs (Q-07)
+│   └── docs/                       # how to generate lineage HTML locally (Q-07)
 ├── deploy/superset/                # BI viewer: compose stack, superset_reader role SQL,
 │                                   #   dataset registration + PI dashboard as code
 ├── analysis/                       # one-off notebooks (scipy / statsmodels)
@@ -116,6 +116,10 @@ uv run python -m invites_loop_bi.pipeline sibc
 # Transform
 uv run dbt build --project-dir dbt        # models + tests
 uv run dbt debug --project-dir dbt        # check the warehouse connection
+
+# Lineage + column docs (single-file HTML; not committed)
+uv run dbt docs generate --project-dir dbt --static
+# then open dbt/target/static_index.html in a browser
 ```
 
 Data lands in `stg_<source_system>.<table>` with a `_loaded_at` column; extraction state lives in `stg_meta.watermarks`. dbt writes `staging` (views) and `marts` (tables) — `marts` is the only schema the BI read-only role can see.

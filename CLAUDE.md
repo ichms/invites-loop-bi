@@ -2,20 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> ## ⛔ DATA TRANSFER IS FROZEN (owner directive, 2026-08-10)
->
-> **Run no extraction or load until the owner lifts this.** No
-> `python -m invites_loop_bi.pipeline …` against any source system, no DAG runs,
-> no manual `COPY` from a source database. This covers everything that moves rows
-> from a source into `stg_*`.
->
-> Still allowed: read-only `SELECT` against any database, `dbt build` (it only
-> reads `stg_*` and rewrites `staging` / `marts` inside the warehouse), and
-> `pytest` (its warehouse sessions roll back).
->
-> If a task appears to need fresh data, say so and stop — do not run the pipeline
-> to unblock yourself.
-
 ## Overview
 
 `invites-loop-bi` is an OLAP **ELT pipeline** that extracts data from multiple operational
@@ -26,16 +12,17 @@ Python >= 3.13, managed with **uv**, `src/` layout.
 > **State of the repo:** extract, load and transform are all implemented and tested against
 > the real databases. The transform layer is **dbt** (`dbt/` at the repo root): sources over
 > all five landing schemas, staging views, allow-list seed + drift test, and the full star —
-> six dims and five facts (`fct_user_day`, `fct_user_disease_day`, `fct_measurement`,
-> `fct_coaching_event`, `fct_app_action`) with grain and FK tests. `dbt build` is 211/211
+> six dims and twelve facts (`fct_user_day`, `fct_user_disease_day`, `fct_measurement`,
+> `fct_wearable_day`, six source-grain `fct_wearable_*` observation facts,
+> `fct_coaching_event`, `fct_app_action`) with grain and FK tests. `dbt build` is 388/388
 > green; `pytest` 125/125. **`fct_user_day` is a dense behavioural panel** since 2026-08-07
 > (every user-day from the earlier of enrolment and first activity, ~76k rows) — the zero
 > days are the denominator, and a reconciliation test asserts no activity falls outside the
 > spine. Read `todo.md` "The frames we now work under" before changing it. **Wearable counts
 > are not constants** (2026-08-10): those streams watermark on measurement time and the
 > source backfills for ~30 days, so the count at a fixed cutoff rises with extraction date —
-> quote one only with its extraction date. Four streams carry a 30-day `lookback_days`;
-> see A′ in `todo.md`. DAGs are
+> quote one only with its extraction date. All five wearable streams carry a 30-day `lookback_days`
+> (heart rate included since 2026-08-13 for `fct_wearable_day` intensity); see A′ in `todo.md`. DAGs are
 > **written but have never run on a schedule** — five ELT
 > DAGs declare 01:00 KST and `transform_dbt_build` 02:00 KST, but no scheduler is deployed,
 > all five ELT DAGs are paused, and `transform_dbt_build` has never been parsed. Every load
@@ -47,8 +34,8 @@ Python >= 3.13, managed with **uv**, `src/` layout.
 > owner in writing** — see `HANDOVER.md`. Modelling decisions live in
 > `INVITES_LOOP_BI_DECISION_LOG.md` and `IMPLEMENTATION_PLAN.md` (which records where
 > measurement overrode the log — §3), and the Q-11 column classification in `PII_INVENTORY.md`
-> — read them before touching `dbt/`. Generated dbt documentation is committed at
-> `dbt/docs/dbt_docs.html`, and `HOWTO.md` covers extending the marts, exposing
+> — read them before touching `dbt/`. Generate dbt documentation with
+> `dbt docs generate --project-dir dbt --static` (open `dbt/target/static_index.html`); `HOWTO.md` covers extending the marts, exposing
 > models to Superset, and MCP restriction. `main.py` and `src/pipeline.py` are leftover empty stubs; the real
 > entry point is `src/invites_loop_bi/pipeline.py`.
 
@@ -69,6 +56,7 @@ uv run python -m invites_loop_bi.pipeline discovery --overlap-minutes 5
 
 uv run dbt build --project-dir dbt       # transform layer (models + tests); needs setup_env.sh
 uv run dbt debug --project-dir dbt       # check the dbt <-> warehouse connection
+uv run dbt docs generate --project-dir dbt --static  # lineage HTML → dbt/target/static_index.html
 ```
 
 No linter or CI is configured yet.
@@ -234,16 +222,16 @@ extraction):
   and a nullable `unlinked_dt`. Many rows per user is not an edge case — 503 of
   581 users already carry more than one link, 501 of them simultaneously active.
   The source can express Ulsan-and-Jeju today, unchanged.
-- **`dim_user.site_id` is a hardcoded string literal**, `'KR_LOOP_PILOT'`, on
-  every row. It has no source at all. *That* is the single field with a single
-  value, and it is ours.
+- **At that time, `dim_user.site_id` was a hardcoded string literal**,
+  `'KR_LOOP_PILOT'`, on every row. It had no source at all. Superseded by the
+  2026-08-13 current-site update below.
 - `dim_deployment_site`'s header claims Jeju "arrive[s] as rows here and as a
   populated `dim_user.site_id` — no restructuring." **That claim is wrong.** A
   scalar `site_id` cannot hold two values, and `dim_user` is SCD Type 1 (D-08),
   so writing Jeju over Ulsan would silently re-attribute every historical fact
   for that user. Correct the header when this is fixed.
 
-Current state: all 404 `dim_user` users join cleanly to `auth_user_customer`,
+State measured 2026-08-10: all 404 `dim_user` users join cleanly to `auth_user_customer`,
 and **all 404 resolve to ULSAN**. JEJU exists as a customer with 14 linked users,
 **none of them in `dim_user`** — the cohort is the 404 sibc users, so Jeju
 arriving for real also reopens the population question.
@@ -257,10 +245,11 @@ double-counts every metric for a dual-affiliated user.
 
 **Four things that bite, and are not solved by the bridge:**
 
-1. **`auth_customer` conflates regions with application tenants.** Its seven rows
+1. **RESOLVED 2026-08-13: `auth_customer` conflates regions with application tenants.** Its seven rows
    are 울산 and 제주 *and* LIS, 아이콜리, iCHMS Operator/Expert/Customer Web. Built
-   naively, `dim_deployment_site` would list "LIS" as a deployment site. Which
-   customers are sites needs an owner rule, not inference.
+   naively, `dim_deployment_site` would list "LIS" as a deployment site. The
+   owner-approved allow-list is Ulsan `2e0a3387-7058-4f9e-a134-2017f7b7000b`
+   and Jeju `778d4ff7-ab76-4070-a9a9-716fac93d9c9`, and no other customer.
 2. **The data cannot currently distinguish "moved" from "both".** Only 10 of
    1,113 link rows have `unlinked_dt` set, so a relocation and a dual affiliation
    both appear as two open links. No modelling fixes that — it is a process gap
@@ -278,8 +267,8 @@ double-counts every metric for a dual-affiliated user.
 Jeju operations started 2026-08-10. A patient-registration error that day was
 resolved by a developer manually re-pointing internal staff accounts from Ulsan
 to Jeju **with direct DML in production**. Diffing the source against the
-warehouse's 2026-08-05 snapshot (the last ichms load; read-only, freeze intact)
-established the following.
+warehouse's 2026-08-05 snapshot (the last ichms load before the freeze;
+freeze lifted 2026-08-13) established the following.
 
 - **13 rows of `auth_user_customer` were UPDATEd in place** — `customer_id`
   flipped ULSAN→JEJU on the existing row, `linked_dt`/`unlinked_dt` untouched.
@@ -305,41 +294,34 @@ established the following.
 - The 1:1 constraint does **not** force destructive writes: unlinking the old
   row and inserting a new one keeps exactly one active zone and satisfies the
   app unchanged. The in-place UPDATE was convenience, not necessity.
-- **Incremental extraction can never see these flips.** The table watermarks on
-  `linked_dt` alone (`ichms_targets.py`), which an in-place UPDATE does not
-  touch. On resume, `auth_user_customer` needs a full re-read — better, convert
-  it to a full-refresh target (1,137 rows, has a PK). A dbt snapshot over the
-  staging table is the only warehouse-side way to catch *future* flips, at
-  load-cadence resolution.
+- **Incremental extraction can never see these flips.** The table used to
+  watermark on `linked_dt` alone, which an in-place UPDATE does not touch.
+  Converted to a full-refresh target on 2026-08-13 (small, has a PK). A dbt
+  snapshot over the staging table is the only warehouse-side way to catch
+  *future* flips at load-cadence resolution if full-refresh is ever dropped.
 - **Staff cannot be inferred from the data.** Two further staff accounts (new
   hires, confirmed by the owner 2026-08-12) have no Ulsan history at all — JEJU
   from their first link. At least 15 staff accounts are known, 14 of them
   inside the analysis cohort; no source system carries a staff flag. The roster
   must be owner-provided (a seed), never derived from re-point traces.
-- **The cohort grew during the freeze**: sibc `user_master` 404→412, iccoli
-  mapper 441→450 (measured 2026-08-12). Resuming therefore also triggers the
-  documented enrolment-wave procedure — delete the iccoli watermark rows to
-  force a full, idempotent re-read.
-- **No mart or metric view reads zone today.** `dim_user.site_id` and
-  `dim_deployment_site` are hardcoded literals and nothing else references
-  site. Resuming EL changes no published number *by zone*; the
-  current-value-vs-as-of hazard begins with the first zone-aware view.
+- **The cohort grew during the 2026-08-10–13 freeze**: sibc `user_master`
+  404→412, iccoli mapper 441→450 (measured 2026-08-12). Resume deletes the
+  iccoli watermark rows to force a full, idempotent re-read.
+#### Update 2026-08-13 — current-site reporting enabled
 
-**Blocked on the dev team — request sent 2026-08-12,** seven items: (1) which
-`auth_customer` rows are zones (a type column or an owned list); (2) the target
-cardinality of user:zone — the app says 1:1, the schema says M:N, the owner's
-stated need is "both at once", and this decision is upstream of all warehouse
-zone modelling; (3) unlink+insert write discipline for manual flips; (4)
-notification of any manual production DML, plus the list of tables it touches;
-(5) the app's read rule when multiple active links exist; (6) whether the 13
-rows will be backfilled at the source; (7) how staff accounts are identified.
+The owner supplied the two deployment-site UUIDs above and chose current-site
+mapping for `dim_user`. `dim_deployment_site` now has Ulsan and Jeju from
+`auth_customer`; `dim_user.site_id` reads the one active approved
+`auth_user_customer` link. At the 2026-08-13 extraction all 416 cohort users
+have exactly one: 392 Ulsan and 24 Jeju. This is an SCD1 **current-value filter**,
+not history. The 13 in-place flips still erase their previous site and switch
+time, so never use `dim_user.site_id` to attribute a past event as-of its date.
 
-**Until those answers land, any work needing zone semantics is out of scope
-and must be excluded rather than improvised**: the bridge mart, a real
-`dim_deployment_site` (its hardcoded single row is deliberate, not a load
-error — see its header), zone-segmented metrics, and the site axis of the
-todo.md item-B cohort column. BI must not invent write-contract semantics the
-product does not define.
+Still blocked on the dev team: unlink+insert discipline for manual flips,
+notification of manual production DML, the app read rule if multiple approved
+links become active, and whether the 13 flipped rows will be repaired. A
+temporal site bridge, historical/as-of site metrics and simultaneous
+Ulsan-and-Jeju semantics remain out of scope until those contracts exist.
 
 ## Testing
 

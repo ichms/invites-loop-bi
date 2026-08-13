@@ -59,9 +59,10 @@ sources:
         description: >
           The cohort population (N-02) — one row per enrolled user. user_nm,
           birthday and birthtime were dropped and excluded at extraction on
-          2026-08-06 (PII_INVENTORY.md R-4); the static age/bio_age and
-          weight/height/born_in still land but are never selected by staging
-          (D-22/D-23/D-24).
+          2026-08-06 (PII_INVENTORY.md R-4); static age/bio_age and born_in
+          still land but are never selected (D-22/D-23/D-24). weight/height
+          are selected as an enrolment snapshot for dim_user.bmi_band
+          (Frame 2); longitudinal body metrics stay in fct_measurement.
       - name: user_signature_type
         description: Full-refresh target — freshness on it measures whether the sibc DAG ran at all.
         freshness:

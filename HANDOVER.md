@@ -56,7 +56,8 @@ Whoever takes it on permanently owns:
 3. `IMPLEMENTATION_PLAN.md` §3 — where measurement overrode the log, and why.
    This is the honest record of what turned out to be wrong.
 4. `PII_INVENTORY.md` — what data exists, classified, plus the open items.
-5. `dbt/docs/dbt_docs.html` — open in a browser; model and column documentation
+5. Generate dbt docs (`uv run dbt docs generate --project-dir dbt --static`)
+   and open `dbt/target/static_index.html` — model and column documentation
    with the full lineage graph.
 6. `HOWTO.md` — adding a dim/fact to the marts, exposing models to Superset,
    and restricting what an MCP / AI client can do.
@@ -86,7 +87,7 @@ Whoever takes it on permanently owns:
 | Q-04 named owner | Deferred 2026-08-06; interim holder Changmin Ahn (ACH) |
 | Q-13 production hosting | Deliberately deferred; everything is hosting-independent |
 | Unmapped cohort users | 2 active members with no iccoli link — owner follow-up |
-| Deployment site code | `KR_LOOP_PILOT` is a placeholder; confirm before it labels a dashboard |
+| Historical site attribution | Current Ulsan/Jeju is mapped; in-place source flips erase prior site and switch time |
 | Glucose units | Normalised by threshold; a per-row unit from Discovery would retire the heuristic |
 | ichms table scope | Identifier columns dropped, but no mart reads these tables at all |
 | `public` schema grant | `superset_reader` holds USAGE via the `PUBLIC` pseudo-role; only an admin can revoke |

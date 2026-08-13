@@ -1,8 +1,9 @@
 # stg_discovery: EL landing schema for the Discovery health-data platform
 # (database invites_loop, schema discovery). Holds lifelog measurements plus
 # sensitive categories (genomic, medical, prescription) that must never reach
-# marts raw — see PII_INVENTORY.md. No staging model reads from here yet
-# (fct_measurement arrives in Phase 3).
+# marts raw — see PII_INVENTORY.md. Lifelog staging models feed fct_measurement
+# (discrete readings), fct_wearable_day (daily intensity), and the six
+# fct_wearable_* source-grain observation facts.
 
 version: 2
 

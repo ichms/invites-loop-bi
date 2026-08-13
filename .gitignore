@@ -23,8 +23,7 @@ deploy/superset/.env
 # Claude configs
 .claude/
 
-# Local documentation for context. Root-anchored on purpose: an unanchored
-# `docs/` also swallowed dbt/docs/, where the committed dbt documentation lives.
+# Local documentation for context. Root-anchored so it does not swallow dbt/docs/.
 /docs/
 /data/
 /analysis/
@@ -33,3 +32,6 @@ deploy/superset/.env
 analysis/*.html
 analysis/*.pdf
 analysis/.ipynb_checkpoints/
+
+# Generated dbt docs (rebuild: dbt docs generate --project-dir dbt --static)
+dbt/docs/dbt_docs.html

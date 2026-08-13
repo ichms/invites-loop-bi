@@ -106,15 +106,13 @@ DISCOVERY_EXTRACTION_TARGETS = [
 		"table_name": "disc_lifelog_user_heartrate",
 		"watermark_col": "measured_dt",
 		"fallback_watermark_col": None,
-		# NO lookback, deliberately -- this is the one wearable stream left out.
-		# It has the same backdating exposure as its four siblings, but it is
-		# 8.5M rows with no usable index on measured_dt (only a composite), so
-		# every run already seq-scans it and a 30-day re-read would add real cost
-		# to each one. It buys nothing analytically: step is a strict superset of
-		# the wearable user set (181 of 181 users, measured 2026-08-10), so
-		# heartrate contributes no user the lookback on step would not recover.
-		# Revisit if a mart ever needs heartrate *intensity* rather than presence,
-		# or if the source gains an index -- see WEARABLE_BACKFILL_LOOKBACK_DAYS.
+		# Same backdating as the other four streams. Presence did not need this
+		# lookback (step is a strict superset of wearers), but fct_wearable_day
+		# uses HR mean/min/max, and late syncs move those numbers -- measured
+		# 2026-08-13: 85,748 samples below the 08-05 watermark, cutoff-day mean
+		# 60 vs 65 bpm. Cost is real (8.5M rows, no usable index on measured_dt)
+		# and is the price of intensity rather than presence.
+		"lookback_days": WEARABLE_BACKFILL_LOOKBACK_DAYS,
 	},
 	{
 		# The lifelog parent. Every per-measurement table below keys on

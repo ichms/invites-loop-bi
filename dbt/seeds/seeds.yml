@@ -37,3 +37,22 @@ seeds:
     columns:
       - name: disease_id
         data_tests: [not_null, unique]
+
+  - name: staff_roster
+    description: >
+      Owner-maintained list of internal-staff user_ids inside the analysis
+      cohort. dim_user.cohort_group reads this seed — never derive staff from
+      auth_user_customer re-points or other behavioural traces (CLAUDE.md
+      2026-08-12). Bootstrapped 2026-08-13 from the §1 wellness-mission
+      discriminator (sibc cohort members with no accrual under parent
+      category 34, excluding the unused completion flag 41): 19 rows. That
+      proxy is "participation contract vs none", not "voluntary vs
+      involuntary" (DASHBOARD_METRIC_FEEDBACK §1.5). Add new hires here by
+      hand; remove anyone confirmed not staff.
+    config:
+      column_types:
+        user_id: text
+        note: text
+    columns:
+      - name: user_id
+        data_tests: [not_null, unique]

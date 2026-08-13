@@ -2,9 +2,9 @@
 # invites_loop, schema ichms). The Q-11 inventory (PII_INVENTORY.md) found the
 # direct identifiers this layer carried (credentials, phone numbers, names,
 # birth dates, login IPs, chart number); they were dropped and excluded at
-# extraction on 2026-08-06. Whether these tables belong in the warehouse at all
-# is still an open owner question — none feeds a planned mart. No staging model
-# reads from here.
+# extraction on 2026-08-06. Since 2026-08-13, auth_customer and
+# auth_user_customer feed the owner-approved current Ulsan/Jeju site dimension;
+# the remaining auth/member tables still feed no mart.
 
 version: 2
 
@@ -21,9 +21,15 @@ sources:
           error_after: {count: 50, period: hour}
       - name: auth_client
       - name: auth_customer
+        description: >
+          Mixes deployment sites with application tenants. Only the two
+          owner-approved UUIDs may enter dim_deployment_site.
       - name: auth_user
       - name: auth_user_account
       - name: auth_user_customer
+        description: >
+          User/customer links. Full-refreshed because in-place customer changes
+          do not update linked_dt; current-site reporting uses active links only.
       - name: auth_user_login_history
       - name: auth_user_profile
       - name: auth_user_withdraw_history

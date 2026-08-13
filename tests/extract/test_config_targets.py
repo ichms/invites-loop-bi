@@ -190,7 +190,9 @@ def test_the_wearable_streams_re_read_a_backfill_window():
 	sleep against the source at an identical cutoff.
 
 	Losing these is silent -- every grain and not_null test still passes -- so the
-	guard lives here rather than in dbt.
+	guard lives here rather than in dbt. Heart rate joined the lookback on
+	2026-08-13 when fct_wearable_day started using HR intensity; presence alone
+	did not need it (step is a strict superset of wearers).
 	"""
 	from invites_loop_bi.config.discovery_targets import WEARABLE_BACKFILL_LOOKBACK_DAYS
 
@@ -200,14 +202,9 @@ def test_the_wearable_streams_re_read_a_backfill_window():
 		"disc_lifelog_user_activity",
 		"disc_lifelog_user_sleep",
 		"disc_lifelog_user_oxygen_saturation",
+		"disc_lifelog_user_heartrate",
 	):
 		assert targets[table]["lookback_days"] == WEARABLE_BACKFILL_LOOKBACK_DAYS, table
-
-	# Heartrate is left out ON PURPOSE: 8.5M rows, no usable index on measured_dt,
-	# and step is a strict superset of the wearable user set, so it recovers no
-	# user the others miss. If a mart ever needs heartrate intensity rather than
-	# presence, this assertion is the thing to revisit -- not to silently delete.
-	assert targets["disc_lifelog_user_heartrate"]["lookback_days"] is None
 
 
 def test_meal_needs_no_lookback_because_it_watermarks_on_arrival():

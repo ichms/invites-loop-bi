@@ -1,7 +1,7 @@
 {{ config(materialized='table') }}
 
 -- Grain: one row per (user_id, wear_date, stream_code) — the days on which a
--- wearable stream produced anything for a user.
+-- wearable stream produced anything for a user, plus that day's aggregates.
 --
 -- MATERIALIZED AS A TABLE, unlike every other staging model. `heartrate` alone
 -- is ~8.5M sample rows; as a view this would re-scan on every downstream query
@@ -25,9 +25,10 @@
 -- fixed cutoff rises with extraction date and will keep rising.
 -- ALWAYS QUOTE A WEARABLE COUNT WITH THE EXTRACTION DATE ATTACHED.
 --
--- The extractor now re-reads a 30-day window on four of the five streams
--- (`lookback_days` in discovery_targets.py), so the gap against source closes on
--- every run instead of accumulating. Heartrate is deliberately excluded there.
+-- All five streams re-read a 30-day window (`lookback_days` in
+-- discovery_targets.py). Heart rate joined on 2026-08-13 when fct_wearable_day
+-- started using mean/min/max — presence did not need it (step is a strict
+-- superset of wearers), intensity does.
 --
 -- STEP ALONE DETERMINES THE UNION. Measured 2026-08-10 after the backfill: every
 -- user with any stream also has step — 186 of 186 unrestricted, zero users with
@@ -39,20 +40,59 @@
 -- choice is the whole gap between 181 and 137 (union excluding step) and it
 -- belongs to the owner, not to this model.
 --
--- WEAR-DAY, NOT INTENSITY, is the point. §1.1④ found 91.6% of device holders at
--- a perfect 30/30 peak: a worn watch accumulates data passively, so density
--- measures willingness far less than it measures ownership. Counting days a
--- stream fired is the honest primitive; anything finer invites the reading that
--- §1.2 already disproved.
---
+-- Presence vs intensity: fct_user_day still counts distinct stream_code
+-- (wear-day). fct_wearable_day pivots the value_* / kcal / duration columns.
+-- NULL in those columns means the stream has no such measure, not zero.
 -- Date is derived on the KST boundary (D-18), matching `ymd` everywhere else.
+-- Sleep is dated from total_measure_start_dt, same as presence; overnight
+-- sessions that span midnight sit on the start date.
 
 {% set streams = [
-	('disc_lifelog_user_step',              'measured_dt',             'step'),
-	('disc_lifelog_user_activity',          'measured_dt',             'activity'),
-	('disc_lifelog_user_heartrate',         'measured_dt',             'heartrate'),
-	('disc_lifelog_user_oxygen_saturation', 'measured_dt',             'oxygen_saturation'),
-	('disc_lifelog_user_sleep',             'total_measure_start_dt',  'sleep'),
+	{
+		'table': 'disc_lifelog_user_step',
+		'ts': 'measured_dt',
+		'code': 'step',
+		'value': 'step_cnt',
+		'kcal': 'kcal_burned',
+		'distance': 'distance',
+		'duration': none,
+	},
+	{
+		'table': 'disc_lifelog_user_activity',
+		'ts': 'measured_dt',
+		'code': 'activity',
+		'value': none,
+		'kcal': 'kcal_burned',
+		'distance': 'distance',
+		'duration': 'extract(epoch from (s.measured_end_dt - s.measured_start_dt)) / 3600.0',
+	},
+	{
+		'table': 'disc_lifelog_user_heartrate',
+		'ts': 'measured_dt',
+		'code': 'heartrate',
+		'value': 'heartrate_cnt',
+		'kcal': none,
+		'distance': none,
+		'duration': none,
+	},
+	{
+		'table': 'disc_lifelog_user_oxygen_saturation',
+		'ts': 'measured_dt',
+		'code': 'oxygen_saturation',
+		'value': 'oxygen_saturation',
+		'kcal': none,
+		'distance': none,
+		'duration': none,
+	},
+	{
+		'table': 'disc_lifelog_user_sleep',
+		'ts': 'total_measure_start_dt',
+		'code': 'sleep',
+		'value': none,
+		'kcal': none,
+		'distance': none,
+		'duration': 'extract(epoch from (s.total_measure_end_dt - s.total_measure_start_dt)) / 3600.0',
+	},
 ] %}
 
 with lifelog_user as (
@@ -64,14 +104,42 @@ with lifelog_user as (
 
 wear_days as (
 
-{% for table_name, ts_column, stream_code in streams %}
-	select distinct
+{% for stream in streams %}
+	select
 		li.user_id,
-		(s.{{ ts_column }} at time zone 'Asia/Seoul')::date as wear_date,
-		'{{ stream_code }}' as stream_code
-	from {{ source('stg_discovery', table_name) }} as s
+		(s.{{ stream.ts }} at time zone 'Asia/Seoul')::date as wear_date,
+		'{{ stream.code }}' as stream_code,
+		count(*)::bigint as n_samples,
+		{% if stream.value %}
+		sum(s.{{ stream.value }})::numeric as value_sum,
+		avg(s.{{ stream.value }})::numeric as value_mean,
+		min(s.{{ stream.value }})::numeric as value_min,
+		max(s.{{ stream.value }})::numeric as value_max,
+		{% else %}
+		null::numeric as value_sum,
+		null::numeric as value_mean,
+		null::numeric as value_min,
+		null::numeric as value_max,
+		{% endif %}
+		{% if stream.kcal %}
+		sum(s.{{ stream.kcal }})::numeric as kcal_sum,
+		{% else %}
+		null::numeric as kcal_sum,
+		{% endif %}
+		{% if stream.distance %}
+		sum(s.{{ stream.distance }})::numeric as distance_sum,
+		{% else %}
+		null::numeric as distance_sum,
+		{% endif %}
+		{% if stream.duration %}
+		sum({{ stream.duration }})::numeric as duration_hours
+		{% else %}
+		null::numeric as duration_hours
+		{% endif %}
+	from {{ source('stg_discovery', stream.table) }} as s
 	inner join lifelog_user as li using (user_lifelog_sn)
-	where s.{{ ts_column }} is not null
+	where s.{{ stream.ts }} is not null
+	group by 1, 2, 3
 {% if not loop.last %}
 	union all
 {% endif %}
@@ -82,5 +150,13 @@ wear_days as (
 select
 	user_id,
 	wear_date,
-	stream_code
+	stream_code,
+	n_samples,
+	value_sum,
+	value_mean,
+	value_min,
+	value_max,
+	kcal_sum,
+	distance_sum,
+	duration_hours
 from wear_days

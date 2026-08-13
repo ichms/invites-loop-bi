@@ -1,6 +1,6 @@
 # TODO — pick up here
 
-Last updated: **2026-08-11**. Architecture in `CLAUDE.md`; decisions in
+Last updated: **2026-08-13**. Architecture in `CLAUDE.md`; decisions in
 `INVITES_LOOP_BI_DECISION_LOG.md`; what measurement overrode in
 `IMPLEMENTATION_PLAN.md` §3; handover state in `HANDOVER.md`.
 
@@ -10,7 +10,7 @@ Last updated: **2026-08-11**. Architecture in `CLAUDE.md`; decisions in
 
 ## Where we are
 
-**All five phases are done and committed.** `dbt build` **211/211**, `pytest`
+**All five phases are done and committed.** `dbt build` **388/388**, `pytest`
 **125/125**. Extract → load → transform → marts → metric views → Superset all run
 **when invoked by hand**. Nothing runs unattended — see §3.
 
@@ -98,8 +98,8 @@ depth, which Frame 1 already ruled out as a differentiator:
   is three commands from whole. This is the property the semantic-layer
   principle (log line 39) wants from the viewer, and Superset gives it free.
 - **Row-level security exists, free**, for the day a second deployment site
-  needs row restriction (`dim_deployment_site` exists; `KR_LOOP_PILOT` is a
-  placeholder).
+  needs row restriction (`dim_deployment_site` now contains the approved Ulsan
+  and Jeju source rows).
 - **The cost, named:** no implicit joins — every chart reads one dataset, so
   cross-table questions need pre-joined wide models (`HOWTO.md` §3), and
   Planning-Team GUI authoring is weaker than the alternatives. Korean UI
@@ -285,13 +285,43 @@ A per-channel source-vs-warehouse count is the only thing that catches it.
 
 ## Start here next session
 
-> **⛔ Data transfer is frozen** (owner, 2026-08-10) — no extraction or load runs
-> until the owner lifts it. Read-only SQL, `dbt build` and `pytest` are fine.
-> See the banner at the top of `CLAUDE.md`. Everything below is doable without
-> moving a single row: A0's inputs are already landed, and B reads `stg_sibc`.
+> **Data-transfer freeze lifted 2026-08-13** (owner). The 2026-08-10 hold was
+> the Jeju registration-error window. Loads may run again. Zone *modelling*
+> is still out of scope until the dev-team answers in `CLAUDE.md` land —
+> lifting the freeze is not permission to invent affiliation semantics.
 
-In order. B and B0 continue Frame 2 and are pure code. **A and A′ both closed
-2026-08-10 — see below.**
+In order. **A and A′ both closed 2026-08-10.** Heart-rate lookback and
+`fct_wearable_day` are the 2026-08-13 follow-on (intensity, not presence).
+Item B (`dim_user` segments) is in the working tree; B0 zone work stays
+blocked.
+
+### Wearable intensity — `fct_wearable_day`
+
+Presence (`wearable_streams_active` on `fct_user_day`) does not carry step
+counts, sleep hours, SpO2 or heart-rate values. Those stay out of
+`fct_measurement` (wrong grain). The daily fact is sparse: NULL means the
+stream did not fire, not zero. Heart rate now has the same 30-day
+`lookback_days` as the other four streams.
+
+### Wearable observations — six source-shaped facts
+
+Added 2026-08-13 for observation-level analysis without contaminating
+`fct_measurement`. Point samples, intervals and sleep sessions do not share one
+honest grain, so they stay in `fct_wearable_step`, `fct_wearable_activity`,
+`fct_wearable_heartrate`, `fct_wearable_oxygen_saturation`,
+`fct_wearable_sleep` and `fct_wearable_sleep_stage`. Exact duplicate payloads
+collapse to one observation and retain their multiplicity in
+`source_row_count`; attribution and count reconciliation are build failures.
+
+At the 2026-08-13 14:51 KST extraction, the cohort facts contain 19,080 step,
+14,061 activity, 8,877,550 heart-rate, 60,867 SpO2, 10,314 sleep-session and
+614,708 sleep-stage distinct observations. The targeted lineage is **190/190**
+and the current full `dbt build` is **388/388** green. These are extraction-dated
+readings, not constants.
+
+Resume load (do not start EL over): whole-system runs, heart-rate lookback
+on `measured_dt`, iccoli watermark delete (enrolment wave), `auth_user_customer`
+full-refresh. Then `dbt build`.
 
 ### B0. Site affiliation is multi-valued — do this before B
 
@@ -302,20 +332,19 @@ The full analysis is in `CLAUDE.md` § "Site affiliation is multi-valued". The
 headline is that the constraint is **ours, not the source's**:
 `ichms.auth_user_customer` is already a temporal bridge (surrogate PK, no unique
 on `user_id`, `linked_dt` / `unlinked_dt`), both tables are **already landed in
-`stg_ichms`**, and all 404 `dim_user` users join to it and resolve to ULSAN.
-Meanwhile `dim_user.site_id` is a hardcoded `'KR_LOOP_PILOT'` literal with no
-source at all, and `dim_deployment_site`'s header carries a forward-compat claim
-that is now known to be false.
+`stg_ichms`**. At the 2026-08-10 measurement all 404 `dim_user` users resolved
+to ULSAN, while `dim_user.site_id` was a hardcoded `'KR_LOOP_PILOT'` literal.
+That state is superseded by the 2026-08-13 update below.
 
 **It sequences before B** because B adds "cohort group — Ulsan participant vs
 internal staff", which is *the same axis*. Building that as a single-valued
 column and then discovering affiliation is many-to-many means tearing it out.
 Decide the cardinality once, then build both on it.
 
-Open owner questions, none of which code can settle: which `auth_customer` rows
-are sites rather than app tenants; whether overlapping active links mean "moved"
-or "both" (only 10 of 1,113 rows ever set `unlinked_dt`, so today the data
-cannot tell); and the reporting rule for a dual-affiliated user's facts.
+Open owner questions at that point, none of which code could settle: which
+`auth_customer` rows are sites rather than app tenants; whether overlapping
+active links mean "moved" or "both" (only 10 of 1,113 rows ever set
+`unlinked_dt`); and the reporting rule for a dual-affiliated user's facts.
 
 **Update 2026-08-12 — B0 is now blocked on the dev team, not just the owner.**
 The Jeju launch (2026-08-10) was handled by manually re-pointing 13 staff rows
@@ -325,11 +354,23 @@ enforce user:customer 1:1 at code level, so the schema's multi-valued
 capability is not backed by any write path. "Moved vs both" is thereby answered
 *for staff* (exclusive switching, by app constraint), but the switch times are
 unrecorded. Full findings and the seven-item request to the dev team are in
-`CLAUDE.md` § "Site affiliation is multi-valued", update of 2026-08-12. Until
-those answers land, **build nothing zone-aware**, and note for item B: the
+`CLAUDE.md` § "Site affiliation is multi-valued", update of 2026-08-12. At that
+point the rule was **build nothing zone-aware** (superseded for current-site
+filtering by the update below), and note for item B: the
 staff-vs-participant column must come from an owner-provided roster, never from
 `auth_user_customer` traces — two confirmed staff accounts are new hires with
 no Ulsan history at all.
+
+**Update 2026-08-13 — current-site reporting is enabled; history is not.**
+Owner-approved site IDs are Ulsan
+`2e0a3387-7058-4f9e-a134-2017f7b7000b` and Jeju
+`778d4ff7-ab76-4070-a9a9-716fac93d9c9`, excluding every application tenant.
+`dim_deployment_site` now reads those two rows and `dim_user.site_id` reads the
+one active approved link. All 416 cohort users currently have exactly one
+(392 Ulsan, 24 Jeju). This permits a current-site filter only. Historical/as-of
+site metrics, a temporal bridge and simultaneous dual-affiliation semantics
+remain blocked because in-place source flips erase the prior site and switch
+time.
 
 ### B. Extend `dim_user` — the segment attributes Frame 2 needs
 
@@ -350,11 +391,10 @@ Still missing, and §1/§2 both turn on them:
 ### C. Push column descriptions into the Superset datasets
 
 The dbt descriptions on `fct_user_day`'s panel columns carry the denominator
-and control-variable warnings, and since 2026-08-10 the **`dim_user.site_id`
-warning** ("NOT A REAL AFFILIATION — a hardcoded constant, identical for all
-404 users"). That one matters most: the column looks like a real segment in
-the GUI, so a non-SQL user can group by it and get a confident, meaningless
-answer.
+and control-variable warnings. `dim_user.site_id` now carries a different
+load-bearing warning: it is a real **current-site** segment, but not historical
+affiliation. A non-SQL user can filter today's Ulsan/Jeju population with it;
+grouping past events by it silently reattributes those events after a move.
 
 Superset dataset columns have a `description` field settable over the REST
 API, but nothing ships the dbt manifest into it — extend
@@ -419,7 +459,7 @@ Two related decisions, detail in `HOWTO.md` §1:
 |---|---|
 | **Q-04 permanent owner** | Deferred; ACH interim. The one deliverable code cannot close |
 | `SUPERSET_SECRET_KEY` + `superset_reader` password | Only in local `deploy/superset/.env` — needs a password manager / Key Vault |
-| Deployment site code | `KR_LOOP_PILOT` is a placeholder; confirm before it labels a dashboard |
+| Historical site attribution | Current Ulsan/Jeju is available; source flips erase prior site and switch time, so as-of reporting remains blocked |
 | Glucose units | Normalised by threshold; a per-row unit from Discovery would retire the heuristic |
 | ichms table scope | Identifier columns dropped, but no mart reads these tables at all |
 | PII inventory R-7 / R-8 | Discovery clinical payload tables; re-run inventory on target changes |

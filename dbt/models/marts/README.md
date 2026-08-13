@@ -32,3 +32,33 @@ Three rules that follow:
 per-channel totals equal staging's. The spine is bounded, so anything outside it
 disappears **silently** — grain and `not_null` tests all still pass. That test
 caught 381 dropped meal records on the first attempt. Do not delete it.
+
+## `fct_wearable_day` is sparse intensity
+
+Wear-day presence stays on `fct_user_day.wearable_streams_active`. This fact
+holds the daily values (step count, sleep hours, HR mean/min/max, SpO2, activity
+kcal). A NULL column means that stream did not fire — do not coalesce it to 0
+on the dense panel. Heart-rate samples are pre-aggregated; they are not in
+`fct_measurement`.
+
+## Raw wearable observations are source-shaped
+
+`fct_wearable_step`, `fct_wearable_activity`, `fct_wearable_heartrate`,
+`fct_wearable_oxygen_saturation`, `fct_wearable_sleep` and
+`fct_wearable_sleep_stage` preserve the six source grains. They are separate
+facts because a point sample, an activity interval and a sleep session do not
+share one honest compound grain. Use these for observation-level work; use
+`fct_wearable_day` for routine daily intensity reporting.
+
+Exact duplicate source payloads collapse to one `observation_id`, but
+`source_row_count` preserves their multiplicity. Sum that column when the
+question is about delivered source rows; count fact rows when the question is
+about distinct observations. Wearable backfill still applies, so quote either
+count with its extraction date.
+
+## Wide datasets
+
+`fct_user_day_wide` is the panel with Frame 2 segment columns (`sex`,
+`bmi_band`, `cohort_group`, `is_observable_*`) and calendar helpers already
+joined. Prefer it in Superset for multi-angle behavioural charts; keep
+`fct_user_day` as the thin fact the metric views and notebooks compose over.

@@ -63,7 +63,11 @@ models:
         data_tests: [not_null]
 
   - name: stg_sibc__user_master
-    description: Cohort population (N-02), one row per enrolled user. Identity and static-age columns are never selected.
+    description: >
+      Cohort population (N-02), one row per enrolled user. Identity and
+      static-age columns are never selected. weight_kg / height_cm are the
+      enrolment snapshot for dim_user segment moderation (Frame 2); zeros
+      nullified.
     columns:
       - name: user_id
         data_tests: [not_null, unique]
@@ -75,6 +79,14 @@ models:
               config: {severity: warn}
       - name: joined_dt
         data_tests: [not_null]
+      - name: weight_kg
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.02}
+      - name: height_cm
+        data_tests:
+          - null_rate_below:
+              arguments: {max_null_rate: 0.02}
 
   - name: stg_irs__user_irs_hist
     description: Scalar IRS+/LRS/MRS/PRS scores, relational — the source of truth the sibc payloads only rank.
@@ -163,6 +175,46 @@ models:
       - name: login_datetime
         data_tests: [not_null]
 
+  - name: stg_ichms__deployment_site
+    description: >
+      Owner-approved deployment sites from auth_customer. Only the Ulsan and
+      Jeju customer UUIDs qualify; application tenants are excluded.
+    columns:
+      - name: site_id
+        data_tests:
+          - not_null
+          - unique
+          - accepted_values:
+              arguments:
+                values:
+                  - '2e0a3387-7058-4f9e-a134-2017f7b7000b'
+                  - '778d4ff7-ab76-4070-a9a9-716fac93d9c9'
+      - name: site_name_kor
+        data_tests: [not_null]
+      - name: site_name_eng
+        data_tests: [not_null]
+      - name: is_active
+        data_tests:
+          - accepted_values:
+              arguments: {values: [true]}
+
+  - name: stg_ichms__current_user_deployment_site
+    description: >
+      One active Ulsan/Jeju link per user under the current iCHMS write
+      contract. Current-state only; in-place updates do not preserve history.
+    columns:
+      - name: user_id
+        data_tests: [not_null, unique]
+      - name: site_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ichms__deployment_site')
+                field: site_id
+      - name: user_customer_id
+        data_tests: [not_null, unique]
+
   # The two lifelog models below back the behavioural half of fct_user_day.
   # The older stg_discovery__* models carry no declarations; these do, because
   # their grain is what keeps fct_user_day's grain true.
@@ -184,6 +236,8 @@ models:
       five streams is the settled definition of device ownership (C3), after
       three competing definitions produced 130 / 157 / 167 and were quoted
       interchangeably. Materialized as a table — heartrate alone is ~8.5M rows.
+      Also carries per-stream daily aggregates (n_samples, value_*, kcal, duration)
+      for fct_wearable_day; fct_user_day still only counts distinct stream_code.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -199,3 +253,110 @@ models:
           - accepted_values:
               arguments:
                 values: [step, activity, heartrate, oxygen_saturation, sleep]
+      - name: n_samples
+        data_tests: [not_null]
+
+  - name: stg_discovery__lifelog_wearable_step
+    description: Distinct raw step payloads; exact duplicates collapse into source_row_count.
+    columns:
+      - name: source_observation_id
+        data_tests: [not_null, unique]
+      - name: user_lifelog_sn
+        data_tests: [not_null]
+      - name: measured_at
+        data_tests: [not_null]
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: stg_discovery__lifelog_wearable_activity
+    description: Distinct raw activity interval payloads; exact duplicates collapse into source_row_count.
+    columns:
+      - name: source_observation_id
+        data_tests: [not_null, unique]
+      - name: user_lifelog_sn
+        data_tests: [not_null]
+      - name: measured_at
+        data_tests: [not_null]
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: stg_discovery__lifelog_wearable_heartrate
+    description: >
+      Distinct raw heart-rate payloads. The measured_at/type/value combination
+      remains distinct; only identical payloads collapse into source_row_count.
+    columns:
+      - name: source_observation_id
+        data_tests: [not_null, unique]
+      - name: user_lifelog_sn
+        data_tests: [not_null]
+      - name: measured_at
+        data_tests: [not_null]
+      - name: heartrate_count
+        data_tests: [not_null]
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: stg_discovery__lifelog_wearable_oxygen_saturation
+    description: Distinct raw SpO2 payloads; exact duplicates collapse into source_row_count.
+    columns:
+      - name: source_observation_id
+        data_tests: [not_null, unique]
+      - name: user_lifelog_sn
+        data_tests: [not_null]
+      - name: measured_at
+        data_tests: [not_null]
+      - name: oxygen_saturation
+        data_tests: [not_null]
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: stg_discovery__lifelog_wearable_sleep
+    description: Distinct raw sleep-session payloads; exact duplicates collapse into source_row_count.
+    columns:
+      - name: source_observation_id
+        data_tests: [not_null, unique]
+      - name: user_sleep_sn
+        description: >
+          Source session key. Unique today and required for unambiguous
+          sleep-stage attribution; a second payload for one key fails loudly.
+        data_tests: [not_null, unique]
+      - name: user_lifelog_sn
+        data_tests: [not_null]
+      - name: started_at
+        data_tests: [not_null]
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
+
+  - name: stg_discovery__lifelog_wearable_sleep_stage
+    description: >
+      Distinct raw sleep-stage interval payloads. Attribution to a user runs
+      through stg_discovery__lifelog_wearable_sleep.
+    columns:
+      - name: source_observation_id
+        data_tests: [not_null, unique]
+      - name: user_sleep_sn
+        data_tests: [not_null]
+      - name: started_at
+        data_tests: [not_null]
+      - name: sleep_stage_code
+        data_tests: [not_null]
+      - name: source_row_count
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1}
