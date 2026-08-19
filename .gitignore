@@ -20,7 +20,8 @@ my_project.sublime-project
 setup_env.sh
 deploy/superset/.env
 
-# Claude configs
+# Agent Configs
+.agents/
 .claude/
 
 # Local documentation for context. Root-anchored so it does not swallow dbt/docs/.
