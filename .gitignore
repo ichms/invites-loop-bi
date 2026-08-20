@@ -28,6 +28,7 @@ deploy/superset/.env
 /docs/
 /data/
 /analysis/
+todo.md
 
 # Notebook exports (rebuild with nbconvert)
 analysis/*.html

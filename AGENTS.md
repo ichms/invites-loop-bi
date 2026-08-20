@@ -337,7 +337,7 @@ leaving anything behind** — keep it that way when adding tests.
 - Identifiers from config are interpolated into SQL, so they go through `quote_ident()`, which
   validates before quoting. Values are always `%s` parameters — except `COPY`, which takes no
   parameters, so watermark bounds are bound with `cursor.mogrify()`.
-- `apache-airflow` is pinned to `~=3.2.2` in the dev group to match what is installed locally;
+- `apache-airflow` is pinned to `~=3.3.0` in the dev group to match what is installed locally;
   bump it together with the deployed image. Airflow lives in `[dependency-groups] dev` because it
   is the runtime environment, not a library this package imports.
 - Airflow 3.x: import from `airflow.sdk` (`from airflow.sdk import dag, task`), not

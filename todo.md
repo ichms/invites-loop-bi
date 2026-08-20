@@ -1,513 +1,502 @@
-# TODO — pick up here
+# TODO — 다음 작업 시작점
 
-Last updated: **2026-08-13**. Architecture in `CLAUDE.md`; decisions in
-`INVITES_LOOP_BI_DECISION_LOG.md`; what measurement overrode in
-`IMPLEMENTATION_PLAN.md` §3; handover state in `HANDOVER.md`.
+최종 갱신: **2026-08-20**
 
-> Replaces the 2026-07-30 version, which predated the transform layer (it still
-> described dbt as undecided and the OLAP schema as not started). Recoverable
-> in git if any of that context is wanted.
+아키텍처는 `AGENTS.md`, 결정의 근거는
+`INVITES_LOOP_BI_DECISION_LOG.md`, 측정 결과가 기존 결정을 뒤집은 기록은
+`IMPLEMENTATION_PLAN.md` §3, 인수인계 상태는 `HANDOVER.md`를 본다.
 
-## Where we are
-
-**All five phases are done and committed.** `dbt build` **388/388**, `pytest`
-**125/125**. Extract → load → transform → marts → metric views → Superset all run
-**when invoked by hand**. Nothing runs unattended — see §3.
-
-| Piece | State |
-|---|---|
-| `extract/`, `load/`, `pipeline.py` | done |
-| dbt staging (12 views, allow-list + drift test) | done |
-| dbt marts — 6 dims, 5 facts, grain + FK tests | done |
-| Metric views — 7 `v_pi_*` + `v_bridge_pi_to_kpi` | done |
-| Superset 6.1.0 + `superset_reader` (`deploy/superset/`) | done 2026-08-11, local |
-| Superset datasets (19 marts relations) + PI dashboard as code | done 2026-08-11, scripted |
-| **`fct_user_day` as a behavioural panel** | **done 2026-08-07 — dense spine; 76,026 rows @ 08-10** |
-| Wearable retroactive-data loss (A′) | **found + fixed + backfilled 2026-08-10** |
-| PII inventory (Q-11) + cleanup | done; R-7/R-8 open |
-| 5 ELT DAGs + `transform_dbt_build` | **written; never run on a schedule** |
-| Superset Planning-Team role + backup drill | **open — see HANDOVER.md** |
-| **Named owner (Q-04)** | **deferred — interim only** |
+이 문서는 현재 상태와 다음 작업의 우선순위를 기록한다. 과거 작업의 상세한
+배경은 위 문서와 git 이력에 남기고, 여기에는 다음 사람이 실제로 판단하고
+실행하는 데 필요한 사실만 유지한다.
 
 ---
 
-## The frames we now work under
+## 0. 현재 상태
 
-Four framings changed on 2026-08-07. They are recorded here because they
-reorder the remaining work, and because each corrects something previously
-written down as settled.
+Extract → Load → dbt Transform → marts → metric views → Superset까지 모두
+구현돼 있다. 다만 **모든 실행은 아직 수동**이며, 운영 스케줄러는 배포되지
+않았다.
 
-### Frame 1 — The mart is the deliverable; the viewer is the cheap layer
+마지막으로 확인된 정상 상태는 2026-08-13의 `dbt build` **388/388** 및
+`pytest` **125/125**다. 이 숫자는 현재 상태를 의미하지 않는다. 2026-08-20
+저장공간 사고 대응 중 marts 데이터가 `TRUNCATE`됐으므로, 현재 운영 상태는
+**복구 build 및 전체 검증 전**이다.
 
-The analytical bar for this project is set by work already done in
-`analysis/` and `~/AgentWorkspaces/invites_loop/bi`: Spearman rank
-correlation, Mann-Whitney U, and **OLS with covariate control**.
-
-**No GUI BI tool does any of that** — not Superset, Lightdash or
-Grafana. So analytical depth **cannot discriminate between viewers**. It is a
-requirement on the *warehouse*, which is what decision-log line 39 said all
-along: the semantic layer lives in PostgreSQL and git, not inside the BI tool.
-
-Consequence for sequencing: **make the marts analysis-ready first, choose the
-viewer second.** Choosing the viewer first optimises the layer we already
-decided is disposable (D-19: rebuilding three dashboards is half a day).
-
-### Frame 2 — Design for the operations, not for the request
-
-Measured on 2026-08-07: the point-mission notebook reads `stg_iccoli` (32
-refs), `stg_sibc` (9), `stg_discovery` (1) and **`marts` zero times**. The
-star schema served the viewer and nothing else. Porting that one notebook
-would have fixed exactly one notebook.
-
-The five verification rounds in `DASHBOARD_METRIC_FEEDBACK.md` are not five
-questions. They are the **same seven operations** applied to different
-channels:
-
-| Operation | Demands of the mart |
+| 구성요소 | 현재 상태 |
 |---|---|
-| Relative-time cohorting (M0–M7, not calendar) | `months_since_joined` |
-| Denominator declaration | numerator **and** denominator as paired columns |
-| Control for app access days | `app_login_events` as a first-class column |
-| Negative control | parallel channels at identical grain |
-| Within-person deviation | user × period panel with history to centre on |
-| Segment moderation | conformed age / sex / BMI bands |
-| Observability flags | who is even observable per channel |
+| `extract/`, `load/`, `pipeline.py` | 구현 및 실제 DB 검증 완료 |
+| dbt staging | 23개 SQL 모델. 대부분 view이며 wearable day만 대형 입력을 일별로 축약한 table |
+| dbt marts | 6개 dim, 12개 핵심 fact, `fct_user_day_wide`, 7개 `v_pi_*`, 1개 bridge view |
+| dbt 검증 | 마지막 정상 build 388/388; 8월 20일 사고 후 재검증 필요 |
+| Python 검증 | 마지막 `pytest` 125/125 |
+| Superset | 6.1.0 로컬 배포 및 `superset_reader` 검증 완료 |
+| Superset dataset | 19개가 마지막으로 등록·검증됨. 현재 marts 전체 relation과 재동기화 필요 |
+| Airflow | 5개 ELT DAG와 `transform_dbt_build` 작성 완료, 운영 스케줄 실행 이력 없음 |
+| PII | inventory와 1차 cleanup 완료; R-5 table scope, R-6 일부, R-7/R-8 열림 |
+| 운영 책임자 | 창민님이 임시 담당. 영구 담당자 Q-04는 보류 상태 |
 
-Build for those seven and the next request is a query, not a project.
+### 이번 작업의 순서
 
-### Frame 3 — Zero days are the denominator
-
-A behavioural rate needs the days a user did nothing. Aggregating over a spine
-of only-active days divides by the wrong number and biases every rate upward.
-
-This is not theoretical here. `DASHBOARD_METRIC_FEEDBACK.md` §5.2 records a
-published *"dietary logging is 미흡"* verdict that was a pure denominator
-artifact — per-recorder intensity had **risen** 6.2 → 21.1 days/month. The
-verdict reversed once the denominator was stated.
-
-So: any fact backing behavioural analysis is dense by default, and the
-reconciliation test is not optional (see §7).
-
-### Frame 4 — The viewer is settled (Superset, D-11); what would reopen it
-
-The choice was made on the axes that actually discriminate — not analytical
-depth, which Frame 1 already ruled out as a differentiator:
-
-- **Content as code.** The warehouse connection, all 19 datasets, and the PI
-  dashboard are created by scripts in `deploy/superset/`. A rebuilt instance
-  is three commands from whole. This is the property the semantic-layer
-  principle (log line 39) wants from the viewer, and Superset gives it free.
-- **Row-level security exists, free**, for the day a second deployment site
-  needs row restriction (`dim_deployment_site` now contains the approved Ulsan
-  and Jeju source rows).
-- **The cost, named:** no implicit joins — every chart reads one dataset, so
-  cross-table questions need pre-joined wide models (`HOWTO.md` §3), and
-  Planning-Team GUI authoring is weaker than the alternatives. Korean UI
-  coverage (`BABEL_DEFAULT_LOCALE = ko`) is enabled but not yet exercised by a
-  real Planning-Team user.
-
-Still rejected, firmly: **Redash** (SQL-only, structurally contradicts D-17;
-maintenance mode) and **Grafana** (observability tool — panel-per-query, no
-semantic layer, no ad-hoc multi-dimensional exploration). The full rejection
-table is the log's §4.1.
-
-**Triggers that would reopen the choice:** the Planning Team failing to
-self-serve after the wide datasets and Korean UI land (Lightdash is the
-fallback — best governance fit, metric definitions as dbt YAML, and a
-commercial SOC 2 / HIPAA / BAA path that answers the Q-04 orphan risk), or an
-audit-logging requirement for clinical/genomic data. The acceptance test for
-any candidate: filter `fct_user_disease_day` by `dim_disease.phenotype_kor`
-**and** `dim_user.sex` without SQL, in Korean.
+1. marts를 단일 스레드로 복구하고 저장공간 peak를 측정한다.
+2. dbt 실행 전 저장공간 가드와 실패 정책을 추가한다.
+3. 심박수 모델의 반복 대형 집계를 제거한다.
+4. 자동 운영 전에 EL 완료 → freshness 통과 → dbt 실행의 실제 의존성을 만든다.
+5. 창민님 결정 항목과 외부 의존 항목을 각각 닫는다.
 
 ---
 
-## Done 2026-08-11
+## 1. 2026-08-20 저장공간 사고
 
-### 1. Superset deployed, datasets registered, PI dashboard as code — DONE
+### 1.1 확인된 사실
 
-`deploy/superset/`: pinned 6.1.0 (one-line Dockerfile adds the missing
-psycopg2 driver), `postgres:17` app DB on a named volume, one-shot idempotent
-init (migrate → admin → warehouse connection via `set-database-uri`).
-`superset_reader` created and verified marts-only with KST at the role;
-all 19 marts relations registered as datasets
-(`scripts/register_marts_datasets.sh`); the PI dashboard — 8 charts, layout,
-and the METRICS.ko.md interpretation rules as an on-dashboard card — built by
-`scripts/build_pi_dashboard.py` and verified through the chart-data API
-(every query returns rows; SQL Lab shows `now()` at `+09`).
+- 8월 14일 기준 Extraction과 Load를 수행한 뒤, 8월 20일 dbt 변환을
+  실행하던 중 Azure PostgreSQL이 저장공간 보호를 위해 read-only 모드로
+  전환됐다.
+- 로그상 09:48 KST경 wearable day 집계와 여러 심박수 view 테스트가
+  `threads: 4`로 동시에 실행됐다.
+- 처음 관측된 DB 오류는 dbt가 이전 테이블을 제거하는 단계의
+  `cannot execute DROP TABLE in a read-only transaction`이었다. `DROP`이
+  원인이 아니라, 그 전에 서버가 보호 모드로 전환된 결과다.
+- 서버는 실행 전부터 128GB 용량 임계치에 근접해 있었다. 당시 주요 DB의
+  파일 크기 합은 약 109GB였고, `invites_dw`의 상시 점유는 약 5.44GB,
+  전체의 5~6%였다.
+- 서버 시작 시점인 2026-08-16 이후 `invites_dw`의 `temp_bytes` 누적치는
+  약 26GB였다. 이는 동시 최대 사용량이 아니라 누적값이지만, 대형 집계가
+  반복해서 디스크로 spill됐다는 증거다.
+- 확인 당시 설정은 `work_mem=4MB`, `temp_file_limit=-1`,
+  `max_parallel_workers_per_gather=2`였다.
+- 응급 조치로 marts 데이터를 `TRUNCATE`했다. 이는 일부 공간을 즉시
+  회수했지만 서버 점유의 대부분이 DW가 아니므로 근본 해결은 아니다.
+- Azure 담당자가 저장공간을 128GB에서 256GB로 증설했다. 동일한 약
+  109GB를 기준으로 현재 점유율은 대략 43%이므로 단기 여유는 충분하다.
+- Azure Database for PostgreSQL Flexible Server는 일반적으로 storage 사용률
+  95% 이상 또는 남은 공간 5GiB 미만에서 read-only 보호 모드로 전환될 수
+  있다. 그래서 dbt 차단선은 Azure의 최종 보호선보다 충분히 앞에 둬야 한다.
 
-Two findings worth keeping: SQL Lab ships a function denylist
-(`current_setting`, `version`, `pg_sleep`, … all blocked by default), and the
-one row-count worth spot-checking rendered right — `fct_user_day` 76,026.
+### 1.2 근본 원인과 직접 촉발 요인
 
-### 2. `HOWTO.md` rewritten around the dataset model — DONE
+**근본 원인:** 운영 DB와 DW가 같은 PostgreSQL endpoint의 저장공간, I/O,
+CPU를 공유하는 상황에서 서버가 이미 저장공간 임계치에 가까웠다. 별도
+database는 논리적 경계를 주지만 물리 자원을 격리하지 않는다.
 
-§1 now covers AI-client restriction in terms of the DB role (the layer that
-enforces) vs Superset app roles (which do not protect data); §2 Step 5 is
-dataset registration; §3 explains the one-chart-one-dataset rule, keeps the
-14-row join map from `marts.yml` as the statement of legal joins, and orders
-the options: pre-join in dbt → virtual dataset → SQL Lab.
+**직접 촉발 요인:** dbt가 약 901만 landing 심박수 행을 대상으로 큰
+`GROUP BY`를 여러 번 동시에 수행했다. `stg_discovery__lifelog_wearable_heartrate`
+는 view이므로 staging 테스트, fact 생성, attribution 및 reconciliation
+테스트가 참조할 때마다 집계가 다시 펼쳐진다. 이어서 약 888만 행의
+`fct_wearable_heartrate`도 매 build마다 완전 재생성된다.
 
-## Done 2026-08-07
+따라서 “dbt만 없었으면 문제가 없었다”도, “DW가 서버를 채웠다”도 정확하지
+않다. dbt가 장애 시점을 앞당겼지만, 기존 운영 데이터 증가만으로도 가까운
+시일 내 같은 보호 모드가 발생할 상태였다.
 
-### 7. `fct_user_day` is now a behavioural panel — DONE
+### 1.3 2026-08-20 확정 결정 — endpoint 유지
 
-Frames 2 and 3 made concrete. `dbt build` 184 → **211/211**.
+- 운영 DB와 `invites_dw`는 당분간 현재 endpoint에 유지한다.
+- 별도 staging endpoint로 OLAP를 이전하지 않는다.
+- Azure 담당자가 향후 별도 endpoint 분리를 위한 migration runbook을
+  작성한다.
+- 지금은 데이터 이동 프로젝트를 시작하지 않고, 현재 endpoint에서 dbt의
+  transient storage와 동시 부하를 줄인다.
+- 이 결정을 `INVITES_LOOP_BI_DECISION_LOG.md`에 신규 결정으로 동기화해야
+  한다. 제안 번호는 **D-33**이다.
 
-**Spine: sparse → dense.** 5,747 → **74,410 rows**. Was the union of
-IRS-scoring and integrated-analysis days — 9.3% of the user-days the cohort
-actually lived. Now every day from the earlier of enrolment and first observed
-activity, to the observation frontier.
+### 1.4 endpoint 분리 재검토 트리거 — Azure 담당자와 합의 필요
 
-Two design points worth not re-deriving:
+아래 중 하나를 만족하면 runbook을 꺼내 분리를 재검토한다.
 
-- **Frontier, not `current_date`.** The upper bound is the last day any
-  behavioural source actually delivered. Extending to today manufactures
-  zero-activity days for dates the ELT has not loaded, and a flat line of false
-  zeros at the right edge reads as a product collapse. Per-channel lag is *not*
-  modelled — check `dbt source freshness` before reading the last few days.
-- **Spine starts before enrolment where activity did.** `joined_dt` is entry to
-  the sibc study cohort; app usage predates it for some users. It also gives
-  §1.3 the pre-period its ownership-transfer natural experiment needs.
+- 저장공간 사용률이 7일 이상 70%를 초과한다.
+- 최근 성장률로 보아 90일 이내 80%에 도달할 전망이다.
+- 정상 dbt 실행이 운영 DB의 latency, IOPS 또는 CPU를 유의미하게 악화시킨다.
+- dbt 실행을 위해 서버 용량을 반복 증설해야 한다.
+- DW의 보안, 백업, 장애복구 또는 유지보수 정책이 운영 DB와 달라진다.
 
-**New columns:** `days_since_joined` / `months_since_joined`,
-`app_login_events` + `did_login`, `routines_delivered` / `routines_completed`
-(denominator pair), `manual_measurements`, `meal_records`,
-`wearable_streams_active`, `app_actions`, `active_input_events` /
-`had_passive_collection`.
+용량이 넉넉하더라도 운영 DB 성능 간섭이 확인되면 분리 사유가 성립한다.
 
-**New staging models:** `stg_discovery__lifelog_meal` (the C22 channel — the
-dashboard had `disc_lifelog_user_food` at 11 users while the real one carries
-335) and `stg_discovery__lifelog_wearable_day` (union of all five streams per
-C3; materialised as a **table** because heartrate is ~8.5M rows).
+---
 
-**A defect found by reconciliation, not by tests.** The first spine started at
-`joined_dt` and silently dropped **381 meal records and 23 of 335 recorders**.
-Everything built; every grain and `not_null` test passed. It surfaced only when
-totals were compared against source. Hence
-`dbt/tests/assert_user_day_spine_loses_no_activity.sql`, which asserts fact
-totals equal staging totals per channel — that test is what makes the spine
-bounds safe to change. **Do not delete it when editing the spine.**
+## 2. P0 — 다음 전체 dbt 실행 전
 
-**Validation:**
+### 2.1 marts 복구와 기준선 측정
 
-| Check | Documented | Panel |
+다음 복구 build는 평소 실행이 아니라 **기준선 계측 작업**으로 취급한다.
+
+1. EL 결과와 `dbt source freshness`를 먼저 확인한다.
+2. `dbt build --project-dir dbt --threads 1 --fail-fast`로 실행한다.
+3. 실행 전, 실행 중 peak, 실행 후의 Azure storage used/free와 DB별 크기를
+   기록한다.
+4. 심박수 staging/fact/test별 실행시간과 temp 사용량을 별도로 기록한다.
+5. 전체 388/388 통과를 확인한다.
+6. marts row count와 wearable reconciliation을 확인한다.
+7. Superset의 기존 dataset과 현재 marts relation 차이를 확인한다. 원시
+   wearable fact의 노출 범위를 결정하기 전에는 전체 자동 등록을 실행하지
+   않는다.
+8. 기존 PI dashboard의 대표 쿼리가 실제 행을 반환하는지 확인한다.
+
+복구가 끝나기 전에는 과거의 388/388을 현재 정상 상태의 증거로 인용하지
+않는다.
+
+### 2.2 저장공간 사전 가드
+
+초기 안전선은 다음과 같이 둔다. 한 번의 정상 build peak를 측정한 뒤
+수치로 다시 정한다.
+
+| 사용률 | 동작 |
+|---|---|
+| 70% 미만 | 정상 실행 |
+| 70% 이상 | 경고하고 예상 build peak를 확인 |
+| 80% 이상 | 신규 dbt build를 시작하지 않음 |
+
+256GB의 80%에서 차단하면 약 51GB의 여유가 남는다. 최종 차단선은
+`보호모드 임계치 - max(정상 build peak의 2배, 운영 여유분)`이라는 원칙으로
+정한다.
+
+가능하면 Azure Monitor의 서버 전체 storage 지표를 사용한다. SQL의
+`pg_database_size()` 합은 DB relation 크기 비교에는 유용하지만 Azure가
+관리하는 전체 파일시스템 사용량과 완전히 같지는 않다.
+
+### 2.3 실패 정책
+
+- 현재 `transform_dbt_build`의 `retries=1`은 저장공간 또는 리소스 장애에도
+  10분 뒤 전체 build를 다시 건다. 저장공간 가드가 생기기 전까지
+  **`retries=0`으로 변경**한다.
+- 저장공간 부족은 자동 재시도 대상이 아니다. 용량 확인과 원인 제거 뒤
+  사람이 재실행한다.
+- build 일부만 성공한 상태를 정상으로 간주하지 않는다. 전체 build와
+  reconciliation이 통과해야 복구 완료다.
+- Azure 관리자와 협의해 dbt 역할의 `temp_file_limit` 적용 가능 여부를
+  확인한다. 값은 정상 peak 측정 전에는 추측으로 정하지 않는다.
+- `work_mem`을 먼저 크게 올리지 않는다. 쿼리 하나의 spill은 줄 수 있지만
+  worker × sort/hash 연산 수만큼 메모리가 곱해져 다른 장애를 만들 수 있다.
+  먼저 `threads=1` 기준선을 측정한다.
+
+### 2.4 사고 대응 runbook
+
+`HANDOVER.md`에서 열려 있는 `RUNBOOK.ko.md`에 다음 순서를 기록한다.
+
+1. 신규 EL/dbt 실행 중단
+2. Azure storage와 DB별 점유 확인
+3. 실행 중인 대형 쿼리 및 build run 식별
+4. 필요 시 Azure 증설 또는 문제 작업 중단
+5. 재생성 가능한 marts 정리는 최후 수단으로만 수행
+6. 단일 스레드 복구 build
+7. dbt 테스트, reconciliation, Superset smoke test
+8. 사고 시각, peak, 조치, 재발 방지책 기록
+
+`TRUNCATE marts`를 기본 대응으로 만들지 않는다. landing과 source를 지우는
+절차는 이 runbook에 포함하지 않는다.
+
+---
+
+## 3. P1 — 반복 대형 집계 제거
+
+### 3.1 심박수 dedupe를 한 번만 계산
+
+현재 구조:
+
+1. 약 901만 landing 행을 staging view가 `GROUP BY`한다.
+2. staging generic tests가 같은 view를 반복 평가한다.
+3. `fct_wearable_heartrate`가 view를 다시 평가해 약 888만 행 table을 만든다.
+4. fact tests와 두 custom reconciliation test가 다시 큰 relation을 읽는다.
+5. `stg_discovery__lifelog_wearable_day`도 원본 심박수 행을 일별 집계한다.
+
+목표 구조:
+
+- 심박수 payload dedupe 결과를 물리 relation으로 한 번 계산한다.
+- `fct_wearable_heartrate`, wearable day, attribution, reconciliation이 그
+  결과를 재사용한다.
+- wearable day가 dedupe relation을 사용할 때 exact duplicate의 multiplicity를
+  잃지 않는다. `n_samples`는 `sum(source_row_count)`, 평균은
+  `sum(heartrate_count * source_row_count) / sum(source_row_count)`로 계산하고
+  min/max는 기존 값과 같아야 한다.
+- grain, FK, row-count 보존 테스트는 유지한다. 단지 같은 `GROUP BY`를
+  테스트마다 다시 만들지 않는다.
+- 변경 전후 결과가 완전히 같은지 row count, `source_row_count` 합,
+  user/date별 집계로 검증한다.
+
+staging table 하나의 상시 점유는 늘지만, 현재 256GB 환경에서는 약 900만
+행을 테스트마다 임시로 재집계하는 것보다 예측 가능하고 안전한 trade-off다.
+
+### 3.2 Q-05 재개방 — 심박수 계열만 제한적 incremental
+
+기존 결정은 “전체 build가 약 15분을 넘기 전에는 모든 marts를 full table로
+재생성한다”였다. 이 기준은 당시 측정된 작은 모델을 전제로 했고, 8월 20일
+장애가 그 전제를 깨뜨렸다.
+
+새 기준은 실행시간만이 아니다.
+
+- transient storage peak
+- 동일 endpoint의 운영 DB에 주는 I/O와 CPU 영향
+- 반복 scan 및 정렬 횟수
+- 늦게 도착하는 데이터의 정정 가능성
+- 후임자가 이해하고 복구할 수 있는 복잡도
+
+모든 모델을 incremental로 바꾸지 않는다. 우선 심박수 dedupe와
+`fct_wearable_heartrate`만 대상으로 한다.
+
+- 이미 측정된 30일 lookback window를 재사용한다.
+- window 안의 기존 행을 지우고 현재 landing 결과로 다시 삽입한다.
+- mapping 변경이나 30일 밖 수정에 대비해 정기 또는 수동 full refresh 경로를
+  유지한다.
+- incremental과 full refresh 결과의 동등성 테스트를 추가한다.
+- 작은 dim/fact는 full rebuild를 유지한다.
+
+### 3.3 동시성
+
+- 복구와 첫 최적화 검증은 `threads=1`로 수행한다.
+- 정상 build peak와 운영 DB 영향이 확인된 뒤에만 `threads=2`를 시험한다.
+- `threads=4`로의 복귀는 단순 실행시간 단축이 아니라 peak storage와 운영
+  영향까지 비교한 측정 결과가 있을 때만 허용한다.
+
+---
+
+## 4. P1 — 자동 운영 전에 고칠 orchestration
+
+현재 5개 ELT DAG는 01:00 KST, transform DAG는 02:00 KST를 선언하지만,
+이는 실제 완료 의존성이 아니라 시간 차이일 뿐이다. EL이 한 시간을 넘기거나
+일부 source만 실패해도 transform이 시작될 수 있다.
+
+또한 `transform_dbt_build.py`는 `dbt source freshness ... || true`로
+freshness 실패를 무조건 무시한다. D-01의 “조용한 오답보다 큰 실패” 원칙과
+맞지 않는다.
+
+자동 운영 전에 다음을 구현한다.
+
+- 5개 EL 작업이 모두 성공한 뒤 transform이 실행되도록 실제 dependency를
+  만든다.
+- 필수 source의 freshness error는 transform을 차단한다.
+- 단순 warn과 error를 구분한다. 변경이 적은 정상 테이블을 일괄 실패시키지
+  않는다.
+- `max_active_runs=1`은 유지해 두 build가 같은 marts를 동시에 쓰지 못하게
+  한다.
+- storage preflight를 build 직전 실행한다.
+- 실패 알림에 source freshness, Azure storage, 실패한 dbt node를 포함한다.
+
+### Q-13을 둘로 분리
+
+- **Q-13A — Airflow/scheduler 운영 위치:** 데이터 신선도와 무인 운영을
+  막고 있으므로 실제 open item이다.
+- **Q-13B — Superset production hosting:** 로컬 검증과 모델링을 막지 않으므로
+  계속 보류할 수 있다.
+
+대시보드 숫자를 운영 수치로 취급하기 전에는 Q-13A가 닫혀야 한다. 그전까지
+대시보드에는 마지막 성공 extraction/build 시각을 함께 표시한다.
+
+---
+
+## 5. 창민님 결정이 필요한 항목
+
+### 5.1 저장공간 사고와 직접 관련된 결정
+
+| 결정 | 선택지가 바꾸는 것 | 권고 |
 |---|---|---|
-| Meal users / records | 335 | **335 / 37,374 — exact, zero loss** |
-| §4.5 routine completion @ 16+ login days | 65–72% | **71.6%** |
-| §4.5 gradient across buckets | ~3× | 7.0% → 22.4% → **71.6%** |
-| Wearable users @ 2026-07-31 | 167 | 177 → **181 after the 08-10 backfill; reconciled, panel is right** |
+| **약 888만 행의 심박수 observation fact를 매일 생성할 것인가** | observation-level 분석 가능성 대 일상 build 비용 | 실제 소비자가 없다면 정규 build에서 제외하고 필요할 때 생성 |
+| **원시 wearable fact를 Superset에 노출할 것인가** | Planning Team의 자유도 대 대형 ad-hoc query 위험 | 일별 `fct_wearable_day`만 일반 사용자에게 노출하고 원시 fact는 분석가 전용 |
+| **endpoint 분리 트리거 승인** | Azure runbook을 실제로 시작할 기준 | §1.4의 70%/80%/90일 기준을 Azure 담당자와 합의 |
+| **미사용 landing 데이터 보존 목적** | 저장공간보다 더 중요한 PII·유전체·임상 데이터 보유 책임 | 아래 R-5/R-6/R-7을 table 단위로 결정 |
 
-The dominant-variable finding reproduces. The low buckets read lower than the
-document because this pools completions/deliveries where the source averaged
-per-user rates, and because the dense spine adds zero-activity months to the
-denominator — the denominator effect itself. **The two are not directly
-comparable; do not quote them side by side.**
+### 5.2 기존 분석 정의 결정
 
----
+**웨어러블 보유 정의:** step alone이 현재 wearable union 전체를 결정한다.
+모든 stream 보유자가 step을 가지며, 44명의 cohort 사용자는 step만 있다.
+휴대폰도 걸음 수를 생성할 수 있고 source에는 watch와 phone을 구분할 값이
+없다.
 
-## Done 2026-08-10
+- step 포함: 2026-07-31 기준 181명
+- step 제외: 같은 기준 137명
 
-### A. Wearable count reconciled — the panel's 177 is correct
+“device 보유”라고 부르려면 휴대폰 pedometer도 device로 인정한다는 명시적
+결정이 필요하다. 결정 전에는 `wearable_data_observed`처럼 관측 사실만
+표현하는 명칭을 쓴다. wearable 수치는 retroactive backfill로 바뀌므로 항상
+**cutoff와 extraction date를 함께 인용**한다.
 
-The documented 167 is **a stale snapshot, not a target**. Same union, same
-cutoff; the difference is extraction date, because this data grows backwards.
+### 5.3 데이터 최소화 및 보존 범위
 
-**Proof by monotonicity, which needs no reconstruction of the old query.** C3
-worked over the ~442 LOOP-mapped set; `dim_user` is 404, of which **402 are
-inside that mapped set** (the other 2 are the known unmapped pair below). Same
-definition and same cutoff over a *superset* of users must yield a count ≥ ours.
-The doc got 167 against our 177. At most 2 users can be blamed on scope, so ≥8
-of the gap cannot be — the data itself differs.
+dbt가 직접 읽는 landing relation은 27개, 직접 읽지 않는 relation은 98개이며
+후자가 약 3.33GB를 차지한다. 크기만 보고 일괄 삭제하지 않는다. 미래 분석
+가치와 민감정보 보존 책임을 table별로 판단한다.
 
-Confirmed directly: at 2026-07-31 the count rises monotonically with how
-recently the data was pulled — **167** (doc) → **177** (panel, in-cohort) →
-**181** (our staging, unrestricted) → **185** (source today, step alone).
+- **R-5:** marts가 사용하지 않는 `ichms.auth_*` / `mem_*` table을 계속
+  landing할지 결정한다. 직접 식별자 column cleanup은 완료됐다.
+- **R-6:** marts가 사용하지 않는 `irs.job_input_data`의 genotype 및 기타
+  payload를 DW에 보존할지 결정한다.
+- **R-7:** Discovery consultation, examination, medical, prescription payload
+  table이 필요한지 확인하고, 목적이 없으면 extraction target에서 제거한다.
+- **R-8:** target config 변경과 loader의 upstream column 자동 추가 시 PII
+  inventory를 다시 실행하는 절차를 runbook에 넣는다.
+- `stg_sibc.daily_routine_activities`의 약 702MB TOAST는 dbt가 선택하지 않는
+  raw JSONB 네 개가 대부분이다. 응답 원문 분석 계획이 없다면 제외 후보지만,
+  기존 “landing은 source의 transient copy” 정책을 바꾸므로 owner 결정 없이
+  삭제하지 않는다.
+- `stg_iccoli.tb_action_user_log.target_data`도 현재 metric에는 쓰이지 않지만
+  향후 action 분석 가능성이 있으므로 별도 보존 판단이 필요하다.
 
-Both candidate causes in the old item A were wrong. It is not **cohort scope** —
-that pushes the count *down* by 4, the wrong direction. It is not a
-**stream-filter difference** — C3's 167 is the same five-way union this model
-already implements. The real cause is the retroactive backfill in **A′**, which
-is why closing A opened a defect instead.
+### 5.4 운영·접근 권한
 
-**Consequence:** `wearable_streams_active` is sound and can be used. But no
-wearable count is a constant — always quote it with its extraction date. Do not
-"fix" the model to reproduce 167.
-
-**Worth an owner decision, separately:** step alone determines the union — every
-user with any stream has step (186 of 186 unrestricted; zero exceptions). 44
-in-cohort users have step and *nothing else*, at well under half the day-density
-(median 38 wear days vs 95). Phones count steps without a watch and nothing in
-the data separates them. So "has a device" means "has step data", and that
-choice is the entire distance between **181** and **137** (union excluding
-step). Recorded in the model header.
-
-### A′. Wearable retroactive-data loss — found, fixed, backfilled
-
-Closing A did not close cleanly; it exposed a live pipeline defect.
-
-**The defect.** All five wearable streams watermark on the **measurement** time
-(`measured_dt`, `total_measure_end_dt`). Wearables sync late, so a watch uploads
-samples stamped days or weeks earlier. Those rows land *below* the watermark,
-where `measured_dt > last_watermark` can never see them. Not lag — permanent,
-silent loss. **No source table carries an insert timestamp** (checked), so
-watermarking on arrival time was not an option.
-
-`step` gave the clean measurement, its 2026-08-06 load being a single full read:
-**454 rows for dates ≤ 08-06 arrived after it**, reaching **29 days back**,
-decaying with age (75 on the load date, ~12–15/day for three weeks, 1–3 at
-26–29 days). Hence a 30-day window — measured, not guessed.
-
-**The fix.** New per-table `lookback_days` in the target config, wired through
-`build_extractor` as the extractor's existing `overlap`. Declared 30 days on
-step / activity / sleep / SpO₂. Correctness is free: those tables are already in
-`KNOWN_MISSING_PRIMARY_KEY`, so the loader does delete-window-then-insert, and
-the delete window is built from the same widened bound — a test pins that.
-An operator's `--overlap-minutes` can widen a declared lookback but never narrow
-it. **Heartrate deliberately excluded**: 8.5M rows, no usable index, and step is
-a strict superset of the wearable user set, so it recovers nobody.
-
-**Backfilled and verified.** Ran the four streams; at the 2026-07-31 cutoff the
-warehouse now equals the source exactly — step 186/186, activity 135/135, sleep
-123/123, SpO₂ 119/119. Heartrate remains 133 vs 135, by design. `dbt build`
-**211/211**, `pytest` **125/125** (8 new). `fct_user_day` 74,410 → **76,026**
-rows, frontier now 2026-08-10, wearable users at 07-31 **177 → 181**.
-
-**The trap this ran into, now documented in the config.** Loading a lifelog
-child without its parent orphans rows *silently*. Refreshing four streams to
-08-10 against a `disc_lifelog_user_info` frozen at 08-06 left **4,651
-unattributable step rows** and drove the wearable count **down to 169 while the
-row count went up** — every dbt test still green, because an unmatched
-`user_lifelog_sn` is dropped by an inner join, not flagged. A whole-system run
-is safe; a hand-run `--table` on any child needs the parent run straight after.
-A per-channel source-vs-warehouse count is the only thing that catches it.
+- **Q-04 영구 담당자:** 현재 창민님이 임시 담당. 인수인계 시작, 담당자 변경,
+  데이터 조직 개편 중 먼저 오는 시점에 다시 결정한다.
+- **Planning Team:** dashboards-only 역할(Gamma에서 SQL Lab 제거)을 만든다.
+- **AI client:** marts-only DB role만 허용한다. agent가 Superset Admin 세션을
+  가질 수 있는지는 별도 결정한다.
+- `SUPERSET_SECRET_KEY`, `superset_reader` 비밀번호와 app DB 비밀번호를
+  로컬 `.env`에서 Key Vault 또는 비밀번호 관리자로 옮긴다.
+- Superset app DB의 실제 backup/restore drill을 수행한다.
 
 ---
 
-## Start here next session
+## 6. 외부 의존으로 막힌 항목
 
-> **Data-transfer freeze lifted 2026-08-13** (owner). The 2026-08-10 hold was
-> the Jeju registration-error window. Loads may run again. Zone *modelling*
-> is still out of scope until the dev-team answers in `CLAUDE.md` land —
-> lifting the freeze is not permission to invent affiliation semantics.
-
-In order. **A and A′ both closed 2026-08-10.** Heart-rate lookback and
-`fct_wearable_day` are the 2026-08-13 follow-on (intensity, not presence).
-Item B (`dim_user` segments) is in the working tree; B0 zone work stays
-blocked.
-
-### Wearable intensity — `fct_wearable_day`
-
-Presence (`wearable_streams_active` on `fct_user_day`) does not carry step
-counts, sleep hours, SpO2 or heart-rate values. Those stay out of
-`fct_measurement` (wrong grain). The daily fact is sparse: NULL means the
-stream did not fire, not zero. Heart rate now has the same 30-day
-`lookback_days` as the other four streams.
-
-### Wearable observations — six source-shaped facts
-
-Added 2026-08-13 for observation-level analysis without contaminating
-`fct_measurement`. Point samples, intervals and sleep sessions do not share one
-honest grain, so they stay in `fct_wearable_step`, `fct_wearable_activity`,
-`fct_wearable_heartrate`, `fct_wearable_oxygen_saturation`,
-`fct_wearable_sleep` and `fct_wearable_sleep_stage`. Exact duplicate payloads
-collapse to one observation and retain their multiplicity in
-`source_row_count`; attribution and count reconciliation are build failures.
-
-At the 2026-08-13 14:51 KST extraction, the cohort facts contain 19,080 step,
-14,061 activity, 8,877,550 heart-rate, 60,867 SpO2, 10,314 sleep-session and
-614,708 sleep-stage distinct observations. The targeted lineage is **190/190**
-and the current full `dbt build` is **388/388** green. These are extraction-dated
-readings, not constants.
-
-Resume load (do not start EL over): whole-system runs, heart-rate lookback
-on `measured_dt`, iccoli watermark delete (enrolment wave), `auth_user_customer`
-full-refresh. Then `dbt build`.
-
-### B0. Site affiliation is multi-valued — do this before B
-
-Owner raised 2026-08-10: *"this person was in Ulsan and is now also in Jeju"* —
-one person, two affiliations, one field.
-
-The full analysis is in `CLAUDE.md` § "Site affiliation is multi-valued". The
-headline is that the constraint is **ours, not the source's**:
-`ichms.auth_user_customer` is already a temporal bridge (surrogate PK, no unique
-on `user_id`, `linked_dt` / `unlinked_dt`), both tables are **already landed in
-`stg_ichms`**. At the 2026-08-10 measurement all 404 `dim_user` users resolved
-to ULSAN, while `dim_user.site_id` was a hardcoded `'KR_LOOP_PILOT'` literal.
-That state is superseded by the 2026-08-13 update below.
-
-**It sequences before B** because B adds "cohort group — Ulsan participant vs
-internal staff", which is *the same axis*. Building that as a single-valued
-column and then discovering affiliation is many-to-many means tearing it out.
-Decide the cardinality once, then build both on it.
-
-Open owner questions at that point, none of which code could settle: which
-`auth_customer` rows are sites rather than app tenants; whether overlapping
-active links mean "moved" or "both" (only 10 of 1,113 rows ever set
-`unlinked_dt`); and the reporting rule for a dual-affiliated user's facts.
-
-**Update 2026-08-12 — B0 is now blocked on the dev team, not just the owner.**
-The Jeju launch (2026-08-10) was handled by manually re-pointing 13 staff rows
-in production — an in-place `customer_id` UPDATE that left no history and is
-invisible to the `linked_dt` watermark — and the application turns out to
-enforce user:customer 1:1 at code level, so the schema's multi-valued
-capability is not backed by any write path. "Moved vs both" is thereby answered
-*for staff* (exclusive switching, by app constraint), but the switch times are
-unrecorded. Full findings and the seven-item request to the dev team are in
-`CLAUDE.md` § "Site affiliation is multi-valued", update of 2026-08-12. At that
-point the rule was **build nothing zone-aware** (superseded for current-site
-filtering by the update below), and note for item B: the
-staff-vs-participant column must come from an owner-provided roster, never from
-`auth_user_customer` traces — two confirmed staff accounts are new hires with
-no Ulsan history at all.
-
-**Update 2026-08-13 — current-site reporting is enabled; history is not.**
-Owner-approved site IDs are Ulsan
-`2e0a3387-7058-4f9e-a134-2017f7b7000b` and Jeju
-`778d4ff7-ab76-4070-a9a9-716fac93d9c9`, excluding every application tenant.
-`dim_deployment_site` now reads those two rows and `dim_user.site_id` reads the
-one active approved link. All 416 cohort users currently have exactly one
-(392 Ulsan, 24 Jeju). This permits a current-site filter only. Historical/as-of
-site metrics, a temporal bridge and simultaneous dual-affiliation semantics
-remain blocked because in-place source flips erase the prior site and switch
-time.
-
-### B. Extend `dim_user` — the segment attributes Frame 2 needs
-
-Still missing, and §1/§2 both turn on them:
-
-- **`weight` / `height` / `bmi_band`** — `sibc.user_master` has them complete
-  for all 403 (§2.1 measured zero missing). §2.5 warns BMI is non-monotonic and
-  confounded with age, so band it and never interpret it alone.
-- **Cohort group — Ulsan participant vs internal staff.** §1's entire result is
-  this 392 / 50 split, and it is representable nowhere today. Note §1.5's
-  caveat: 29 of the 50 staff have accounts only, so the contrast is
-  "participation contract vs none", **not** "voluntary vs involuntary". Whatever
-  the column is called, that distinction must survive into its description.
-- **Per-user observability flags per channel** — §2.4's structural finding
-  (wearable ownership and routine completion run *inverse* across age; only 98
-  users have both) is uncomputable without them.
-
-### C. Push column descriptions into the Superset datasets
-
-The dbt descriptions on `fct_user_day`'s panel columns carry the denominator
-and control-variable warnings. `dim_user.site_id` now carries a different
-load-bearing warning: it is a real **current-site** segment, but not historical
-affiliation. A non-SQL user can filter today's Ulsan/Jeju population with it;
-grouping past events by it silently reattributes those events after a move.
-
-Superset dataset columns have a `description` field settable over the REST
-API, but nothing ships the dbt manifest into it — extend
-`register_marts_datasets.sh` (or a sibling script) to read
-`dbt/target/manifest.json` and PUT column descriptions per dataset.
-Alternative: configure dbt `persist_docs` so descriptions land as database
-comments, which Superset reads on dataset sync. Either way the source of
-truth stays the dbt YAML.
-
----
-
-## Blocked — needs an owner decision, not code
-
-### 3. Nothing is actually scheduled
-
-Checked 2026-08-07. The DAGs are written and committed, but **no scheduled run
-has ever occurred, and none can**:
-
-- No Airflow scheduler process is running, and none is deployed anywhere.
-- The metadata DB (`~/airflow/airflow.db`, SQLite) has not been written since
-  **2026-07-30 17:18**.
-- All five ELT DAGs are **paused** (`is_paused=1`).
-- `transform_dbt_build` is **not registered at all** — added in `e537c25`, after
-  the last DAG-parse, so Airflow has never seen it.
-- Total DAG-run history: one manual `elt_irs_to_staging` on 2026-07-30.
-
-So `schedule="0 1 * * *"` in `elt_to_staging.py:39` is a declaration, not a
-behaviour. Every load and `dbt build` so far has been a manual CLI invocation,
-and the marts are only as fresh as the last time someone ran one.
-
-This is **Q-13 (production hosting) arriving early** — it was deferred on the
-grounds that everything is hosting-independent, which remains true, but the
-consequence is that unattended operation does not exist. Decide the target
-(a always-on host? managed Airflow? cron calling the CLI?) before treating any
-dashboard number as current.
-
-Cheap interim if a decision is not imminent: run the scheduler locally and
-unpause, accepting that it only runs when the laptop is awake and on-network.
-Better than the current state mainly because failures become visible.
-
----
-
-## Owner decisions (no network needed)
-
-### 4. AI-client and Planning-Team access posture
-
-Two related decisions, detail in `HOWTO.md` §1:
-
-- **AI clients:** the enforcing layer is the DB role — an MCP Postgres
-  connector gets marts-only read credentials (`superset_reader`'s grants),
-  never `analytics_user`. Decide whether agents may hold a Superset login at
-  all; an Admin session can register new warehouse connections, which makes
-  it equivalent to whatever credentials the admin can type.
-- **Planning Team:** configure the dashboards-only Superset role (Gamma
-  minus SQL Lab) so D-17 is enforced in the app as well as at the role.
-  Until then every Superset login can open SQL Lab; `superset_reader` still
-  caps what that reads.
-
-### 6. Carried-forward open items
-
-| Item | State |
+| 항목 | 필요한 상대와 조건 |
 |---|---|
-| **Q-04 permanent owner** | Deferred; ACH interim. The one deliverable code cannot close |
-| `SUPERSET_SECRET_KEY` + `superset_reader` password | Only in local `deploy/superset/.env` — needs a password manager / Key Vault |
-| Historical site attribution | Current Ulsan/Jeju is available; source flips erase prior site and switch time, so as-of reporting remains blocked |
-| Glucose units | Normalised by threshold; a per-row unit from Discovery would retire the heuristic |
-| ichms table scope | Identifier columns dropped, but no mart reads these tables at all |
-| PII inventory R-7 / R-8 | Discovery clinical payload tables; re-run inventory on target changes |
-| Unmapped cohort users | 2 active members with no iccoli link — owner follow-up |
-| Superset upgrade cadence | Pinned `6.1.0` in the deploy Dockerfile; check releases quarterly, back up before bumping |
-| Q-03 existing BI tool | Never answered; would only have changed Phase 4 |
-| Q-13 production hosting | No longer harmless to defer — it is what blocks §3 (nothing is scheduled) |
+| endpoint migration runbook | Azure 담당자. connection 변경, dump/restore 또는 EL replay, role/grant, 검증, cutover, rollback 포함 |
+| Azure storage 경고 | Azure 담당자. 70% 경고, 80% build 차단에 사용할 Monitor 접근 및 알림 채널 |
+| dbt role `temp_file_limit` | Azure 관리자 권한과 정상 build peak 측정 필요 |
+| 과거 site attribution | 개발팀의 unlink→insert 규칙, 수동 production DML 통지, 과거 13개 flip 복구 여부 필요 |
+| 혈당 단위 | Discovery source가 행별 unit을 제공하면 현재 threshold heuristic 제거 가능 |
+| unmapped cohort users 2명 | source owner가 실제 계정 상태와 mapping 누락 원인을 확인해야 함 |
+
+현재 site reporting은 `dim_user.site_id`의 **현재값 필터**만 허용한다. 과거
+event를 현재 site로 grouping하면 이동 전 기록까지 새 site로 재귀속된다.
+historical/as-of site metric이나 temporal bridge는 source contract가 생기기
+전까지 만들지 않는다.
 
 ---
 
-## Known deferrals (carried from the previous plan, still valid)
+## 7. 계속 유지할 설계 프레임
 
-- **Hard deletes never arrive.** Watermark extraction cannot see a deleted row.
-  `tb_ext_user_mapper` was moved to full-refresh for exactly this reason
-  (a deleted mapping silently corrupted cohort membership). The general case is
-  unaddressed: classify remaining tables as append-only vs mutable-without-
-  marker, and decide the deletion-request path (given a purged upstream user,
-  remove their rows from `stg_*` and the marts by user key).
-- **`utils/crypto.py:generate_user_key()` is still unused.** Pseudonymisation
-  was solved differently — direct identifiers are excluded at the EL boundary
-  (N-01) rather than hashed. Either wire it up or delete it; a helper that
-  looks like policy but runs nowhere is worse than neither.
-- **Batched loading (by bytes, not rows).** Not needed at current volumes, but
-  the design is understood: loop over watermark windows with a byte budget,
-  each window a full extract→load→commit (`run_table()` already takes
-  `upper_bound`). Row counts are the wrong unit — row widths span ~112 B to
-  ~653 kB across these sources.
-- **No usable index on watermark columns of the big discovery tables.**
-  `disc_lifelog_user_heartrate.measured_dt` only appears inside a composite;
-  each incremental run seq-scans. Tolerable at current size, and it is a change
-  to a production source DB — monitor rather than act.
-- **15 incremental targets have no primary key** (2 sibc, 13 discovery lifelog
-  — `disc_lifelog_user_step` joined the list today). Accepted: the loader uses
-  delete-window-then-insert, which is idempotent. Pinned in
-  `KNOWN_MISSING_PRIMARY_KEY`.
-- **No linter or CI.**
-- **`apache-airflow` pinned `~=3.2.2`** to match the local install; bump
-  alongside the deployed image.
+### Frame 1 — mart가 산출물이고 viewer는 교체 가능한 얇은 층이다
+
+이 프로젝트의 분석 수준은 Spearman 상관, Mann-Whitney U, 공변량을 통제한
+OLS까지 포함한다. Superset, Lightdash, Grafana 같은 GUI가 이 분석을 대신하지
+않는다. 따라서 분석 깊이는 warehouse가 제공해야 하며 semantic layer는
+PostgreSQL과 git에 남는다.
+
+viewer를 바꾸더라도 mart와 metric definition은 유지돼야 한다.
+
+### Frame 2 — 개별 요청이 아니라 반복되는 분석 연산을 위해 설계한다
+
+| 분석 연산 | mart가 제공해야 할 것 |
+|---|---|
+| 상대시간 cohorting(M0–M7) | `months_since_joined` |
+| 분모 명시 | numerator와 denominator의 paired columns |
+| app 접근일 통제 | `app_login_events` |
+| negative control | 동일 grain의 병렬 channel |
+| 개인 내 변화 | history가 있는 user × period panel |
+| segment moderation | conformed age, sex, BMI band |
+| 관측 가능성 | channel별 `is_observable_*` |
+
+이 일곱 연산을 지원하면 다음 요청은 새 프로젝트가 아니라 새 쿼리가 된다.
+
+### Frame 3 — zero day가 분모다
+
+행동 비율에는 아무것도 하지 않은 날이 필요하다. active day만 모은 spine은
+분모를 줄여 모든 비율을 부풀린다. 그래서 `fct_user_day`는 관측 frontier까지
+매일 한 행을 갖는 dense panel이다.
+
+- upper bound는 `current_date`가 아니라 마지막 관측일이다.
+- source가 아직 들어오지 않은 날짜를 zero로 만들지 않는다.
+- enrolment 이전 실제 activity가 있으면 spine도 그 activity까지 시작한다.
+- `assert_user_day_spine_loses_no_activity` reconciliation test는 삭제하지 않는다.
+
+### Frame 4 — viewer는 Superset으로 결정됐다
+
+Superset 선택은 분석 깊이가 아니라 content-as-code, marts-only DB role,
+row-level security와 교체 가능성을 기준으로 했다. viewer 재검토 조건은
+다음뿐이다.
+
+- wide dataset과 한국어 UI를 제공해도 Planning Team이 self-service에 실패
+- 임상·유전체 데이터에 대한 더 강한 audit logging 요구 발생
+
+재검토 후보의 최소 acceptance test는 SQL 없이 한국어 UI에서
+`fct_user_disease_day`를 `dim_disease.phenotype_kor`와 `dim_user.sex`로
+filter할 수 있는지다.
 
 ---
 
-## Local state worth knowing
+## 8. 완료 이력 — 다시 할 필요 없는 작업
 
-- Superset stack running on **:8088** (Colima VM: 2 CPU / 4 GiB). Admin login
-  is `admin`; its password, the app-DB password, `SUPERSET_SECRET_KEY` and the
-  `superset_reader` warehouse password are all in `deploy/superset/.env`
-  (gitignored, generated). Move the lot to the password manager — see §6.
-- The only Superset content is what the scripts create: 19 datasets and the
-  `pi-metrics` dashboard. No API keys, no extra users, no UI-only content —
-  the app DB is currently reproducible from git, which makes this the cheapest
-  moment to do the backup/restore drill (HANDOVER.md #4).
+### 2026-08-13
+
+- `fct_wearable_day`에 step, sleep hours, SpO2, heart-rate 일별 intensity를
+  추가했다. sparse fact이므로 NULL은 stream 미관측이지 0이 아니다.
+- 여섯 개 source-grain wearable fact를 추가했다:
+  `fct_wearable_step`, `fct_wearable_activity`,
+  `fct_wearable_heartrate`, `fct_wearable_oxygen_saturation`,
+  `fct_wearable_sleep`, `fct_wearable_sleep_stage`.
+- exact duplicate payload만 접고 multiplicity는 `source_row_count`에 보존했다.
+- 2026-08-13 14:51 KST extraction 기준 distinct observation은 step 19,080,
+  activity 14,061, heart-rate 8,877,550, SpO2 60,867, sleep session 10,314,
+  sleep stage 614,708이었다. 이 수치는 extraction date 없이 상수처럼 인용하지
+  않는다.
+- `dim_user`에 weight, height, BMI, BMI band, owner-maintained staff/participant
+  `cohort_group`, channel별 observability flag를 추가했다.
+- `fct_user_day_wide`에 Superset용 segment column을 추가했다.
+- 현재 site mapping을 구현했다. 416명 모두 하나의 active approved site를
+  가지며 당시 Ulsan 392명, Jeju 24명이었다. history는 구현하지 않았다.
+- 마지막 전체 `dbt build` 388/388이 통과했다.
+
+### 2026-08-11
+
+- Superset 6.1.0과 PostgreSQL app DB를 로컬에 배포했다.
+- `superset_reader`를 marts-only, read-only, KST role로 만들고 실제 접속으로
+  검증했다.
+- 19개 marts relation과 PI dashboard 8개 chart를 script로 등록했다.
+- `HOWTO.md`를 DB role, dataset 등록, one-chart-one-dataset 원칙 중심으로
+  재작성했다.
+
+### 2026-08-10 — wearable retroactive backfill
+
+wearable은 measurement time으로 watermarking하지만 device가 수일 또는 수주
+늦게 sync한다. source에는 insert timestamp가 없어 단순 watermark는 과거에
+도착한 행을 영구적으로 놓쳤다.
+
+- step에서 최대 29일 backfill을 측정해 30일 lookback을 정했다.
+- step/activity/sleep/SpO2에 먼저 적용했고 8월 13일 heart-rate에도 적용했다.
+- keyless table은 같은 widened window를 delete 후 insert하므로 replay가
+  idempotent하다.
+- child lifelog table만 갱신하고 `disc_lifelog_user_info` parent를 갱신하지
+  않으면 row count가 늘면서 attributed user count가 줄 수 있다. 전체 system
+  run이 안전하며, child를 수동 실행하면 parent도 바로 갱신한다.
+
+### 2026-08-07 — dense behavioural panel
+
+- `fct_user_day`를 5,747개 active day에서 74,410개 dense user-day로 바꿨다.
+- 이후 backfill로 2026-08-10 기준 76,026행이 됐다.
+- `days_since_joined`, `months_since_joined`, login, routine denominator pair,
+  manual measurement, meal, wearable, app action, passive/active flag를 추가했다.
+- 첫 spine이 381개 meal record와 23명의 recorder를 조용히 잃는 문제를
+  reconciliation test가 발견했다. 이 때문에 grain/not-null test만으로는
+  충분하지 않다.
+
+---
+
+## 9. 알려진 보류 사항
+
+- **hard delete 전파:** watermark extraction은 source에서 삭제된 행을 보지
+  못한다. table을 append-only와 mutable-without-marker로 분류하고 사용자 삭제
+  요청 시 `stg_*`와 marts에서 user key로 제거하는 절차가 필요하다.
+- **사용되지 않는 `generate_user_key()`:** 직접 식별자는 EL boundary에서
+  제외하는 방식으로 해결했다. helper를 실제 정책에 연결하거나 삭제해야 한다.
+- **byte 기준 batched loading:** 현재는 필요 없지만, 필요 시 row 수가 아니라
+  byte budget별 watermark window로 `extract → load → commit`을 반복한다.
+- **Discovery 대형 table의 watermark index:** heart-rate `measured_dt`에 단독
+  usable index가 없어 30일 incremental extraction도 source를 seq-scan한다.
+  production source DB 변경이므로 현재는 측정·모니터링만 한다.
+- **PK 없는 incremental target:** loader의 delete-window-then-insert 전략으로
+  idempotency를 유지한다. `KNOWN_MISSING_PRIMARY_KEY` test가 목록을 고정한다.
+- **linter/CI 없음.**
+- **Airflow `~=3.2.2` pin:** 배포 image와 함께 올린다.
+
+---
+
+## 10. 로컬 운영 상태
+
+- Superset은 Colima VM의 `:8088`에서 실행되도록 구성돼 있다.
+- admin, app DB, `SUPERSET_SECRET_KEY`, `superset_reader` 비밀번호는
+  gitignore된 `deploy/superset/.env`에만 있다. durable secret store로 옮겨야
+  한다.
+- UI에서만 만든 추가 content나 별도 사용자가 없다면 Superset app DB는
+  아직 git script로 대부분 재현 가능하다. backup/restore drill을 하기에 가장
+  싼 시점이다.
+- `register_marts_datasets.sh`는 marts의 모든 table/view를 등록하므로 대형 원시
+  fact를 일반 사용자에게 노출할지 결정하기 전에는 무조건 재실행하지 않는다.
