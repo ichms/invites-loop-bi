@@ -22,7 +22,7 @@ deploy/superset/.env
 
 # Agent Configs
 # .agents/
-# .claude/
+.claude/
 
 # Local documentation for context. Root-anchored so it does not swallow dbt/docs/.
 /docs/
