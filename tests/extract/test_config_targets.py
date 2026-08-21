@@ -23,6 +23,14 @@ REQUIRED_KEYS = {
 	"lookback_days",
 }
 
+EXPECTED_TARGET_COUNTS = {
+	"iccoli": 37,
+	"ichms": 16,
+	"sibc": 36,
+	"irs": 5,
+	"discovery": 34,
+}
+
 
 def test_every_target_has_the_normalised_shape():
 	for system in SOURCE_SYSTEMS:
@@ -86,6 +94,12 @@ def test_counts_add_up():
 		}
 
 
+def test_target_counts_match_the_128_target_contract():
+	actual = {system: len(get_extraction_targets(system)) for system in SOURCE_SYSTEMS}
+	assert actual == EXPECTED_TARGET_COUNTS
+	assert sum(actual.values()) == 128
+
+
 def test_iccoli_declares_fallback_only_where_updates_can_be_null():
 	targets = {t["table_name"]: t for t in get_extraction_targets("iccoli")}
 	# update_datetime stays NULL until a row is updated -> needs create_datetime
@@ -116,7 +130,7 @@ def test_iccoli_user_keyed_tables_are_filtered_to_the_loop_cohort():
 	IMPLEMENTATION_PLAN.md N-02). Every user_no-keyed iccoli target must carry the
 	cohort row filter; the mapper itself is the one deliberate exception.
 	"""
-	from invites_loop_bi.config.iccoli_targets import LOOP_USERS_ONLY
+	from invites_loop_bi.config.iccoli_targets import LOOP_FROM_USERS_ONLY, LOOP_USERS_ONLY
 
 	targets = {t["table_name"]: t for t in get_extraction_targets("iccoli")}
 	user_keyed = {
@@ -135,9 +149,12 @@ def test_iccoli_user_keyed_tables_are_filtered_to_the_loop_cohort():
 		"tb_point_item_srch_hist_log",
 		"tb_point_user_dtl",
 		"tb_point_user_adj_hist",
+		"tb_search_log",
+		"tb_share_info",
 	}
 	for table in user_keyed:
 		assert targets[table]["row_filter"] == LOOP_USERS_ONLY, table
+	assert targets["tb_share_log"]["row_filter"] == LOOP_FROM_USERS_ONLY
 	assert targets["tb_ext_user_mapper"]["row_filter"] is None
 	# everything else defaults to unfiltered
 	for system in SOURCE_SYSTEMS:
@@ -156,6 +173,33 @@ def test_iccoli_identity_columns_never_leave_the_source():
 	assert "birth" not in personal, "birth stays: it is the single source of birth_year (D-23)"
 	device = set(targets["tb_user_device_info"]["exclude_columns"])
 	assert {"device_token", "game_token", "apns_push_to_start_token", "apns_la_token"} <= device
+
+
+def test_iccoli_search_share_targets_are_filtered_full_refresh_and_pii_safe():
+	"""P0: mutable search/share state is fully reread without exporting PII."""
+	from invites_loop_bi.config.iccoli_targets import LOOP_FROM_USERS_ONLY, LOOP_USERS_ONLY
+
+	targets = {t["table_name"]: t for t in get_extraction_targets("iccoli")}
+	search = targets["tb_search_log"]
+	share_info = targets["tb_share_info"]
+	share_log = targets["tb_share_log"]
+
+	for target in (search, share_info, share_log):
+		assert target["load_type"] == LOAD_TYPE_FULL_REFRESH
+		assert target["watermark_col"] is None
+		assert target["fallback_watermark_col"] is None
+
+	assert search["row_filter"] == LOOP_USERS_ONLY
+	assert search["exclude_columns"] == ("word",)
+	assert share_info["row_filter"] == LOOP_USERS_ONLY
+	assert share_info["exclude_columns"] == ("share_key",)
+	assert share_log["row_filter"] == LOOP_FROM_USERS_ONLY
+	assert set(share_log["exclude_columns"]) == {
+		"share_key",
+		"to_user_ip",
+		"to_user_agent",
+		"to_user_no",
+	}
 
 
 def test_the_lifelog_transaction_table_is_extracted_without_its_raw_payload():

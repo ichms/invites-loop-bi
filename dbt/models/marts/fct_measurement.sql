@@ -1,4 +1,4 @@
--- GRAIN: one row per (user_id, measured_at, metric_code) — one discrete reading.
+-- GRAIN: one row per (user_id, source transaction, measured_at, metric_code).
 -- Enforced in marts.yml; never cut (D-04).
 --
 -- Tall by metric_code: BP, body composition, grip strength and glucose all
@@ -20,6 +20,7 @@
 with measurements as (
 
 	select
+		source_stream,
 		user_lifelog_sn,
 		measured_at,
 		metric_code,
@@ -48,26 +49,22 @@ users as (
 
 )
 
--- One reading can arrive under several lifelog transaction ids (device re-sync:
--- 36 such groups on 2026-08-06, every one identical in value, device and
--- timestamp). Collapsing them is what makes the declared grain true; the
--- earliest transaction wins, deterministically.
---
--- The harmless case is a re-delivery like those 36. The dangerous case is two
--- DIFFERENT values in the same slot, where this rule would pick one arbitrarily
--- and put an unexplainable number on a dashboard — assert_measurement_no_
--- conflicting_readings fails the build if that ever appears (zero today).
-select distinct on (l.user_id, m.measured_at, m.metric_code)
+-- Do not collapse the apparent user/time/metric slot. On 2026-08-21 there were
+-- 41 repeated slots and nine carried different platform codes. The source
+-- transaction, device, platform, and location are therefore part of the
+-- observation semantics, even when value and unit happen to agree.
+select
 	l.user_id,
+	m.source_stream,
+	m.user_lifelog_sn as source_transaction_id,
 	m.measured_at,
-	m.measured_at::date as measured_date,
+	(m.measured_at at time zone 'Asia/Seoul')::date as measured_date,
 	m.metric_code,
 	m.metric_value,
 	m.metric_unit,
 	l.device_type_code as device_type_id,
 	l.measure_platform_code,
-	l.measure_location,
-	m.user_lifelog_sn
+	l.measure_location
 from measurements as m
 -- Inner join: a measurement with no parent transaction has no user and cannot
 -- be attributed. assert_measurements_all_attributed pins that count at zero, so
@@ -75,4 +72,3 @@ from measurements as m
 inner join lifelog as l using (user_lifelog_sn)
 -- Cohort only, same guard as the other facts.
 inner join users as u on u.user_id = l.user_id
-order by l.user_id, m.measured_at, m.metric_code, m.user_lifelog_sn

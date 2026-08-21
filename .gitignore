@@ -21,14 +21,13 @@ setup_env.sh
 deploy/superset/.env
 
 # Agent Configs
-.agents/
-.claude/
+# .agents/
+# .claude/
 
 # Local documentation for context. Root-anchored so it does not swallow dbt/docs/.
 /docs/
 /data/
 /analysis/
-todo.md
 
 # Notebook exports (rebuild with nbconvert)
 analysis/*.html

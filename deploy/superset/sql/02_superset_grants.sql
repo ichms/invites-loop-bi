@@ -24,12 +24,22 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA marts GRANT SELECT ON TABLES TO superset_read
 --    (empty and unwritable) instead of assuming it.
 REVOKE ALL ON SCHEMA public FROM superset_reader;
 REVOKE ALL ON SCHEMA staging FROM superset_reader;
+REVOKE ALL ON SCHEMA intermediate_private FROM superset_reader;
+REVOKE ALL ON SCHEMA marts_detail FROM superset_reader;
 REVOKE ALL ON SCHEMA stg_meta FROM superset_reader;
 REVOKE ALL ON SCHEMA stg_iccoli FROM superset_reader;
 REVOKE ALL ON SCHEMA stg_sibc FROM superset_reader;
 REVOKE ALL ON SCHEMA stg_ichms FROM superset_reader;
 REVOKE ALL ON SCHEMA stg_irs FROM superset_reader;
 REVOKE ALL ON SCHEMA stg_discovery FROM superset_reader;
+
+-- Remove relation-level grants too. Lack of schema USAGE already blocks name
+-- resolution, but retaining SELECT would make an accidental future USAGE grant
+-- enough to expose detail immediately.
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA intermediate_private FROM superset_reader;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA marts_detail FROM superset_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA intermediate_private REVOKE ALL ON TABLES FROM superset_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA marts_detail REVOKE ALL ON TABLES FROM superset_reader;
 
 -- 4. Prove it rather than assume it.
 DO $$
@@ -78,6 +88,6 @@ BEGIN
 		RAISE EXCEPTION 'superset_reader cannot reach marts — Superset will see nothing';
 	END IF;
 
-	RAISE NOTICE 'verified: superset_reader reads marts and nothing else (public is empty and not writable)';
+	RAISE NOTICE 'verified: superset_reader reads marts only; private/detail/staging/landing remain denied';
 END
 $$;

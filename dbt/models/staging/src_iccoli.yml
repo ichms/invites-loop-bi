@@ -18,7 +18,7 @@ sources:
     tables:
       - name: tb_ext_user_mapper
         description: >
-          user_no ↔ user_id translation table (Q-10). Full refresh, deliberately —
+          user_no ↔ user_id translation table. Full refresh, deliberately —
           upstream deletes must propagate or cohort membership silently rots.
           Strict 1:1 today; ext_system_code must be filtered to 'LOOP' in every
           join (the column exists to fan out to other systems later).
@@ -69,3 +69,71 @@ sources:
       - name: tb_user_activity_info
       - name: tb_user_attendance
       - name: tb_user_device_info
+      - name: tb_search_log
+        description: >
+          Loop-filtered search-event landing. Full refresh because source rows
+          are updated in place without an update timestamp. Search text is
+          excluded before COPY.
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+        columns:
+          - name: search_log_no
+            data_tests: [not_null, unique]
+          - name: user_no
+            data_tests: [not_null]
+          - name: create_datetime
+            data_tests: [not_null]
+          - name: display_yn
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments: {values: ['Y', 'N']}
+      - name: tb_share_info
+        description: >
+          Loop-filtered share-link creation landing. Full refresh. The share
+          access key is excluded before COPY; polymorphic target_no remains
+          restricted to landing and is not selected by dbt staging.
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+        columns:
+          - name: share_no
+            data_tests: [not_null, unique]
+          - name: user_no
+            data_tests: [not_null]
+          - name: share_type
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments: {values: ['EVENT', 'HOME', 'INVITE', 'POST', 'SURVEY']}
+          - name: create_datetime
+            data_tests: [not_null]
+      - name: tb_share_log
+        description: >
+          Loop-filtered neutral share-interaction landing. Full refresh.
+          Recipient identifiers, share key, IP, and user-agent are excluded
+          before COPY. point_call_yn is retained under its source name because
+          its business meaning is not yet approved.
+        freshness:
+          warn_after: {count: 26, period: hour}
+          error_after: {count: 50, period: hour}
+        columns:
+          - name: share_log_no
+            data_tests: [not_null, unique]
+          - name: share_no
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('stg_iccoli', 'tb_share_info')
+                    field: share_no
+          - name: from_user_no
+            data_tests: [not_null]
+          - name: point_call_yn
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments: {values: ['Y', 'N']}
+          - name: create_datetime
+            data_tests: [not_null]

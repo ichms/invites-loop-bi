@@ -1,3 +1,5 @@
+{{ config(tags=['wearable_detail']) }}
+
 -- Wearable child tables carry no user_id. Direct streams must resolve through
 -- the lifelog parent; sleep-stage intervals must first resolve through sleep.
 -- A missing parent would otherwise disappear silently from the mart facts.

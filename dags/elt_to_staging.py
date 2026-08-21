@@ -3,11 +3,11 @@ Source databases -> warehouse staging.
 
 One DAG per source system, one dynamically mapped task per configured table:
 
-	elt_iccoli_to_staging      34 tables   (database `iccoli`)
+	elt_iccoli_to_staging      37 tables   (database `iccoli`)
 	elt_ichms_to_staging       16 tables  -\\
 	elt_sibc_to_staging        36 tables   |  schemas inside `invites_loop`
 	elt_irs_to_staging          5 tables   |
-	elt_discovery_to_staging   32 tables  -/
+	elt_discovery_to_staging   34 tables  -/
 
 Adding a table to a pipeline means adding an entry to
 `invites_loop_bi.config.<system>_targets`; no change is needed here.

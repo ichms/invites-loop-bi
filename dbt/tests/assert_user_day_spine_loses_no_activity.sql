@@ -1,74 +1,39 @@
--- fct_user_day's spine is bounded — it runs from the earlier of enrolment and
--- first activity, up to the observation frontier. Any behavioural row falling
--- outside those bounds is dropped SILENTLY: the fact still builds, every grain
--- and not_null test still passes, and the only symptom is a total that is
--- quietly too small.
---
--- That is not hypothetical. The first version of this spine started at
--- joined_dt, which dropped 381 meal records and removed 23 of 335 meal
--- recorders entirely, because their records predated study enrolment. Nothing
--- failed. It was found by reconciling against the source.
---
--- So the invariant is asserted directly: for each channel, what the fact totals
--- must equal what staging holds for cohort users. This is the test that makes
--- the spine bounds safe to change.
+-- Every canonical fact row for a cohort user must survive the dense panel.
+-- This includes all app/share channels, coaching, measurements, meals,
+-- wearable streams, integrated analysis, and per-disease IRS rows.
 
-with cohort as (
-
-    select user_id from {{ ref('dim_user') }}
-
+with expected as (
+	select 'app_login_events'::text as channel, count(*)::bigint as total from {{ ref('fct_app_login_event') }}
+	union all select 'app_actions', count(*) from {{ ref('fct_app_action') }}
+	union all select 'app_search_events', count(*) from {{ ref('fct_app_search_event') }}
+	union all select 'share_links_created', count(*) from {{ ref('fct_share_link') }}
+	union all select 'share_interaction_events', count(*) from {{ ref('fct_share_interaction_event') }}
+	union all select 'routines_delivered', count(*) from {{ ref('fct_coaching_event') }}
+	union all select 'routines_completed', count(*) from {{ ref('fct_coaching_event') }} where is_completed
+	union all select 'manual_measurements', count(*) from {{ ref('fct_measurement') }}
+	union all select 'meal_records', count(*) from {{ ref('fct_meal_event') }}
+	union all select 'wearable_streams_active', sum(
+		(step_count is not null)::int + (sleep_hours is not null)::int
+		+ (activity_hours is not null)::int + (heartrate_mean is not null)::int
+		+ (spo2_mean is not null)::int)::bigint from {{ ref('fct_wearable_day') }}
+	union all select 'intg_analysis_rows', count(*) from {{ ref('fct_user_intg_analysis_day') }}
+	union all select 'diseases_scored', count(*) from {{ ref('fct_user_disease_day') }}
 ),
-
-expected as (
-
-    select
-        'meal_records' as channel,
-        count(*) as expected_total
-    from {{ ref('stg_discovery__lifelog_meal') }}
-    inner join cohort using (user_id)
-
-    union all
-
-    select
-        'manual_measurements',
-        count(*)
-    from {{ ref('stg_discovery__lifelog_measurements') }} as ms
-    inner join {{ ref('stg_discovery__lifelog_user_info') }} as li
-        using (user_lifelog_sn)
-    inner join cohort as c on c.user_id = li.user_id
-
-    union all
-
-    select
-        'app_login_events',
-        count(*)
-    from {{ ref('stg_iccoli__tb_user_login_log') }}
-    inner join cohort using (user_id)
-
-    union all
-
-    select
-        'app_actions',
-        count(*)
-    from {{ ref('stg_iccoli__tb_action_user_log') }}
-    inner join cohort using (user_id)
-
-),
-
 actual as (
-
-    select 'meal_records' as channel, sum(meal_records) as actual_total from {{ ref('fct_user_day') }}
-    union all select 'manual_measurements', sum(manual_measurements) from {{ ref('fct_user_day') }}
-    union all select 'app_login_events', sum(app_login_events) from {{ ref('fct_user_day') }}
-    union all select 'app_actions', sum(app_actions) from {{ ref('fct_user_day') }}
-
+	select 'app_login_events'::text as channel, sum(app_login_events)::bigint as total from {{ ref('fct_user_day') }}
+	union all select 'app_actions', sum(app_actions) from {{ ref('fct_user_day') }}
+	union all select 'app_search_events', sum(app_search_events) from {{ ref('fct_user_day') }}
+	union all select 'share_links_created', sum(share_links_created) from {{ ref('fct_user_day') }}
+	union all select 'share_interaction_events', sum(share_interaction_events) from {{ ref('fct_user_day') }}
+	union all select 'routines_delivered', sum(routines_delivered) from {{ ref('fct_user_day') }}
+	union all select 'routines_completed', sum(routines_completed) from {{ ref('fct_user_day') }}
+	union all select 'manual_measurements', sum(manual_measurements) from {{ ref('fct_user_day') }}
+	union all select 'meal_records', sum(meal_records) from {{ ref('fct_user_day') }}
+	union all select 'wearable_streams_active', sum(wearable_streams_active) from {{ ref('fct_user_day') }}
+	union all select 'intg_analysis_rows', sum(intg_analysis_rows) from {{ ref('fct_user_day') }}
+	union all select 'diseases_scored', sum(diseases_scored) from {{ ref('fct_user_day') }}
 )
-
-select
-    e.channel,
-    e.expected_total,
-    a.actual_total,
-    e.expected_total - a.actual_total as rows_lost_outside_spine
+select e.channel, e.total as expected_total, a.total as actual_total
 from expected as e
 inner join actual as a using (channel)
-where e.expected_total is distinct from a.actual_total
+where e.total is distinct from a.total

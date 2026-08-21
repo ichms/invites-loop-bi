@@ -1,93 +1,267 @@
-# Handover checklist
+# Recovery and operations handover
 
-The deliverable list from `INVITES_LOOP_BI_DECISION_LOG.md` §5, with current
-status. Last updated 2026-08-11.
+Last updated: 2026-08-21 KST
 
-One repo, two concerns:
+This is the handover for the current W-first mart redesign and safe recovery. It
+is not a claim that the previous marts are operational. [todo.md](todo.md) is
+the execution authority; this file summarizes what a successor needs to know
+and which decisions still require an owner.
 
-- the ELT pipeline, the dbt project, the decision log and plan, the PII
-  inventory — the repo root.
-- **`deploy/superset/`** — the Superset compose stack, the read-only role SQL,
-  dataset registration and the PI dashboard as code, and the metrics guide.
+## Current handover state
 
----
+- The configured EL estate has 128 targets and all 128 watermark rows currently
+  report <code>SUCCESS</code>.
+- EL was last completed manually through the 2026-08-21 08:00 KST source
+  cutoff.
+- P3 targeted builds restored the redesigned dimensions and atomic facts plus
+  2,744 lifecycle milestones, 81,745 user-days, and 2,996 user-months. This was
+  not the complete <code>daily_core</code> recovery. Six raw wearable facts
+  remain empty in <code>marts_detail</code>; legacy metric views have not passed
+  P5 acceptance.
+- The local Superset stack and its historical datasets/dashboard still exist,
+  but no refresh or representative-chart acceptance was run after P3. Existing
+  dataset output must not be treated as approved operating evidence.
+- The prior dbt 388/388 and pytest 125/125 results describe an older graph.
+  They are not recovery acceptance criteria.
+- The current offline Python baseline is 95 passed and 32 skipped. The live
+  suite has not been rerun.
+- No scheduler is deployed. The declared Airflow schedules have never operated
+  the pipeline unattended.
+- P0 through P3 are complete and recovery is at P4. The
+  <code>daily_core</code> and <code>wearable_detail</code> selectors plus
+  <code>intermediate_private</code>/<code>marts_detail</code> access boundaries
+  are implemented and verified. The lifecycle/panel redesign is implemented;
+  reusable heart-rate dedupe, metric registry, and W-A/B/C/D layer remain.
 
-## Checklist
+Do not quote Superset or legacy metric views as current business evidence.
 
-| # | Deliverable | Status | Where |
-|---|---|---|---|
-| 1 | dbt project (models, tests, docs) in git | **done** | `dbt/` — 34 models, **211** passing build steps |
-| 2 | Deploy stack (compose, env template, role SQL) | **done** | `deploy/superset/` — pinned image, one-shot init, dashboard as code |
-| 3 | Superset running, marts-only read-only role | **done (local)** | Production hosting deliberately undecided (Q-13). Planning-team role (dashboards only, no SQL Lab) still to configure |
-| 4 | Verified backup restore — performed, not merely scripted | **open** | Back up the `superset_app_db_data` volume (pg_dump) and perform a restore drill |
-| 5 | `SUPERSET_SECRET_KEY` stored somewhere durable | **owner action** | Currently only in the local `.env`. Must go to a password manager or Key Vault — it encrypts the stored warehouse credentials |
-| 6 | `RUNBOOK.ko.md` — 이게 안 될 때 | **open** | Write against the Superset stack once ops patterns settle |
-| 7 | `METRICS.ko.md` — 메트릭 추가하는 법 | **done** | `deploy/superset/METRICS.ko.md` |
-| 8 | Named owner, in writing (Q-04) | **interim** | Changmin Ahn (ACH), 2026-08-06. Permanent assignment deferred — see below |
-| 9 | PII inventory across all source schemas | **done** | `PII_INVENTORY.md` — 123 tables, 1,246 columns classified |
-| 10 | JSONB allow-list committed + drift test wired into `dbt build` | **done** | `dbt/seeds/jsonb_allowlist.csv` + `test_jsonb_keys_in_allowlist` |
+## Preserve before proceeding
 
----
+The 2026-08-21 baseline commit is <code>35b0ed4</code>. The following
+pre-existing uncommitted work is part of the redesign:
 
-## Ownership (Q-04)
-
-**Owner decision 2026-08-06: naming a permanent owner is deferred.** Changmin
-Ahn (ACH) holds every operational duty in the meantime, so there is always
-someone to call.
-
-**Revisit when** — whichever comes first: handover begins, the holder changes,
-or the data function is reorganised.
-
-Whoever takes it on permanently owns:
-
-1. The Superset containers and their application-database backups.
-2. `SUPERSET_SECRET_KEY` — without it the stored warehouse credentials in a
-   restored backup are unusable.
-3. The dbt project: what to do when the 02:00 build fails.
-4. The warehouse credentials, including rotating `superset_reader`.
-
----
-
-## What a successor should read, in order
-
-1. `CLAUDE.md` — what the repo is and how to run it.
-2. `INVITES_LOOP_BI_DECISION_LOG.md` — **why** it is shaped this way. Every
-   decision carries its rationale; do not reverse one silently.
-3. `IMPLEMENTATION_PLAN.md` §3 — where measurement overrode the log, and why.
-   This is the honest record of what turned out to be wrong.
-4. `PII_INVENTORY.md` — what data exists, classified, plus the open items.
-5. Generate dbt docs (`uv run dbt docs generate --project-dir dbt --static`)
-   and open `dbt/target/static_index.html` — model and column documentation
-   with the full lineage graph.
-6. `HOWTO.md` — adding a dim/fact to the marts, exposing models to Superset,
-   and restricting what an MCP / AI client can do.
-7. `deploy/superset/README.md` and `deploy/superset/METRICS.ko.md`.
-
-## Things that will bite
-
-- **Percentile scores are not additive.** IRS/IRS+/LRS/MRS/PRS are 1–100
-  ranks. Subtracting them produces nonsense (`IMPLEMENTATION_PLAN.md` §3.6).
-- **`superset_reader` is the PII boundary, not Superset permissions.** The
-  role cannot see the landing schemas at all, and that is the guarantee.
-  Point Superset at the warehouse with any other account and the protection
-  is gone, whatever the in-app roles say.
-- **Grain tests are the contract.** When one fails, the source gained
-  duplicates. Never "fix" it by deleting the test.
-- **The allow-list fails safe.** A new JSONB key breaks the build on purpose;
-  classify it, add it with `extract=false`, move on.
-- **Enrolment waves need a watermark reset.** A user who enrols later has
-  pre-enrolment iccoli rows below the watermark; delete their rows from
-  `stg_meta.watermarks` to force a replay (loads are idempotent).
-
-## Open questions carried forward
-
-| Item | State |
+| File | Intended change |
 |---|---|
-| Q-03 existing BI tool | Never answered; would only have changed Phase 4 |
-| Q-04 named owner | Deferred 2026-08-06; interim holder Changmin Ahn (ACH) |
-| Q-13 production hosting | Deliberately deferred; everything is hosting-independent |
-| Unmapped cohort users | 2 active members with no iccoli link — owner follow-up |
-| Historical site attribution | Current Ulsan/Jeju is mapped; in-place source flips erase prior site and switch time |
-| Glucose units | Normalised by threshold; a per-row unit from Discovery would retire the heuristic |
-| ichms table scope | Identifier columns dropped, but no mart reads these tables at all |
-| `public` schema grant | `superset_reader` holds USAGE via the `PUBLIC` pseudo-role; only an admin can revoke |
+| <code>.gitignore</code> | Make <code>todo.md</code> trackable |
+| <code>dags/elt_to_staging.py</code> | Update the iccoli target count from 34 to 37 |
+| <code>src/invites_loop_bi/config/iccoli_targets.py</code> | Add search/share targets and actor filtering |
+| <code>tests/extract/test_config_targets.py</code> | Add cohort-filter and initial PII checks |
+| <code>todo.md</code> | Record the recovery contract |
+
+A successor must inspect <code>git status --short</code> and the relevant diffs
+before editing. Do not revert, overwrite, commit, push, deploy, or clean these
+changes without explicit authorization.
+
+The three new targets are filtered full-refresh targets with complete EL
+exclusions. The reviewed P0 migration removed the previously landed prohibited
+columns without changing rows or watermarks. P1 staging projections and atomic
+facts preserve that contract; do not relax it in P2 or later phases.
+
+## Read in this order
+
+1. [todo.md](todo.md) — active gates, stop rules, and completion criteria.
+2. [AGENTS.md](AGENTS.md) — repository architecture and stable engineering
+   rules.
+3. [INVITES_LOOP_BI_DECISION_LOG.md](INVITES_LOOP_BI_DECISION_LOG.md) —
+   decisions and rationale, subject to the authority order above.
+4. [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — dated measurements and
+   assumptions that measurement overturned.
+5. [PII_INVENTORY.md](PII_INVENTORY.md) — the post-P0 128-target structural
+   snapshot, search/share cleanup evidence, and retained policy questions.
+6. [HOWTO.md](HOWTO.md) — safe recipes for target, model, metric, permission,
+   and Superset changes.
+7. [deploy/superset/README.md](deploy/superset/README.md) — local viewer stack
+   details. Do not treat local availability as production readiness.
+8. After P6, generate dbt docs and review
+   <code>dbt/target/static_index.html</code> for the actual recovered graph.
+
+## Non-negotiable safety rules
+
+Until P0 through P5 are complete:
+
+- no bare or full-graph dbt build;
+- no scheduler activation;
+- no global Superset marts registration;
+- no new landing truncation, deletion, or manual watermark deletion;
+- no large or wearable-detail execution without Azure storage measurement;
+- no historical attribution from current site;
+- no commit, push, or deployment unless separately requested.
+
+A narrow model build is allowed only after its exact <code>dbt ls</code>
+selection is reviewed, with one thread and fail-fast, and only when the
+selection excludes the heart-rate/detail path.
+
+The current transform DAG is not production-safe. It runs the full graph,
+ignores freshness failure, does not limit threads, and blindly retries the
+whole build. Do not unpause or deploy it as written.
+
+## Recovery phases and exit gates
+
+The full checklists live in [todo.md](todo.md). The phase boundary matters more
+than the calendar.
+
+| Phase | Work | Exit evidence |
+|---|---|---|
+| P0 | Preserve diffs; convert three new sources to filtered full refresh; add EL exclusions; prepare reviewed landing cleanup; regenerate the PII inventory | Target config and inventory agree; prohibited fields cannot re-land; offline tests pass |
+| P1 | Add dbt sources, staging, actor translation, and three atomic event facts | Measured source unique-index grains, Loop-only actors, PII absence, share denominators, and row-loss reconciliation pass |
+| P2 | Add <code>daily_core</code> and <code>wearable_detail</code> selectors; separate <code>marts</code>, private intermediates, and <code>marts_detail</code>; enforce grants | Core selection excludes all raw detail; general BI role cannot read detail; builds are independent |
+| P3 | Shrink <code>dim_user</code>; separate current site and milestones; rebuild dense daily/month panels from canonical facts; model channel completeness | No future leakage; current versus historical site is explicit; channel totals reconcile; unknown is not false zero |
+| P4 | Materialize reusable heart-rate dedupe; add bounded incremental/window replacement and full-refresh comparison | Heavy aggregation is computed once; weighted daily values and source-row counts reconcile; core does not rebuild detail |
+| P5 | Add the metric registry and W-A/B/C/D semantic views | Every public metric has evidence and provenance, population scope, entity, grain, numerator, denominator, eligibility, censoring, owner, and freshness; representative views are non-empty |
+| P6 | Run measured recovery after all prior gates; rebuild core; test; generate docs; explicitly refresh Superset | Current graph is green; storage/runtime baseline is recorded; current charts return data; PII/detail access is denied |
+| P7 | Add real five-EL dependency, hard freshness/storage gates, durable scheduler and metadata, alerts, backups, and an English runbook | The pipeline operates without a local machine; failures identify source, freshness, storage, and dbt node; responsibilities are written |
+
+A later phase's database mutation must not start before the preceding phase's
+exit evidence exists.
+
+P3 exit evidence was recorded on 2026-08-21 KST: exact one-thread targeted
+builds excluded the raw heart-rate/detail path; 201 P3 core tests passed; the
+437-user current-site bridge is exactly one-to-one; atomic totals reconcile to
+the 81,745-row daily panel; and the 2,996-row monthly panel carries observed-day
+denominators plus left-partial/right-censored flags. Per-target watermarks are
+explicitly labelled <code>TARGET_SUCCESS_ONLY</code>, not DAG completion. New
+core tables inherited <code>superset_reader</code> SELECT while private/detail
+relations remained denied.
+
+## P6 recovery controls
+
+P6 is the first complete core recovery build. Before it starts:
+
+1. verify all five EL systems completed;
+2. run source freshness as a hard gate;
+3. record Azure Monitor used and free storage;
+4. stop if usage is 80% or higher;
+5. record PostgreSQL database size and cumulative
+   <code>temp_bytes</code> for comparison;
+6. inspect the implemented <code>daily_core</code> selection;
+7. run the core with one thread and fail-fast;
+8. record pre-run, peak, and post-run storage plus per-node runtime;
+9. reconcile dimensions, atomic facts, panels, metrics, PII, and grants;
+10. build detail separately only if there is a named need and enough headroom.
+
+A detail failure must not invalidate a successful daily-core run.
+
+Superset refresh happens only after the recovered core passes. Register only
+reviewed core/serving relations. Do not bulk-register landing, staging, private
+intermediate, or detail relations.
+
+## Operational ownership required before P7
+
+Changmin Ahn is the interim holder of the repository and local environment. That
+does not make the local machine a production component. Unattended operation
+must not begin until the following responsibilities are assigned in writing.
+
+| Responsibility | Required assignment |
+|---|---|
+| Scheduler runtime | Approved Azure location plus service identity |
+| Daily EL and transform | Named operator who owns failed DAGs and safe reruns |
+| Failure notification | Named recipients for source, freshness, storage, and dbt failures |
+| Airflow metadata DB | Durable location, backup/restore owner, account and secret rotation |
+| Superset runtime and app DB | Runtime owner, backup schedule, tested restore owner |
+| <code>SUPERSET_SECRET_KEY</code> | Durable secret-store owner and rotation/recovery procedure |
+| Warehouse roles | Credential and grant owner, including <code>superset_reader</code> |
+| Azure storage monitoring | Owner for preflight, stop decisions, and capacity trend review |
+| Wearable detail | Named access approver and execution owner |
+| PII inventory | Owner for target-change review and retention decisions |
+
+P2 verified the real <code>superset_reader</code> login as transaction-read-only,
+KST, and <code>marts</code>-only. It read the 487-row search fact while direct
+queries against <code>marts_detail</code>, <code>intermediate_private</code>,
+<code>staging</code>, and landing were denied. P6 must repeat this check after
+the complete core recovery because new relations and defaults can drift.
+
+## Archive policy — resolved 2026-08-21
+
+<code>docs/</code>, <code>data/</code>, and <code>analysis/</code> remain an
+ignored, non-authoritative local archive. Historical reasoning under
+<code>docs/business_intelligence</code> is preserved without translating or
+normalizing its source artifacts. Only durable semantic and evidence rules are
+curated into tracked English documents. Archived values, external-study
+effects, and scenario outputs are not current warehouse facts. Exact
+duplicates, notebook checkpoints, and the superseded autogenerated OLAP plan
+were removed; the rest of the ignored archive was left alone.
+
+## Owner decisions and safe defaults
+
+P0 through P4 can proceed without the following semantic decisions. Withhold
+the affected public metric until its contract is approved.
+
+| Decision required | Safe default while unresolved |
+|---|---|
+| First event that qualifies as activation | Store each raw milestone; publish no activation rate |
+| Active-event taxonomy and windows for 30/90-day retention | Publish no retention metric |
+| Exact business meaning of <code>tb_share_log</code> and <code>point_call_yn</code> | Store a neutral interaction event; do not call it an open or success |
+| Whether raw search-term analysis is required | Exclude raw search text at EL |
+| Whether external-recipient analysis is required | Do not retain external recipient keys |
+| Remote-care qualifying-day definition | Mark as <code>HYPOTHESIS</code>; prohibit revenue or billing claims |
+| Device-measurement eligibility denominator | Publish measuring users and reading counts only; do not publish an adherence or participation rate |
+| Historical site attribution contract | Prohibit historical attribution until upstream writes preserve old site and real change time |
+| Medical and Financial KPI contract | Keep as <code>ROADMAP</code> until encounter/claim sources and grains exist |
+| Permanent scheduler and operational owner | Keep automated operation disabled |
+
+The documentation and access review also surfaced these owner contracts:
+
+| Decision required | Safe default while unresolved |
+|---|---|
+| Small-cell suppression threshold and treatment | Do not publish subgroup metrics that can expose small cohorts |
+| Named <code>metric_owner</code> and <code>decision_owner</code> values | Keep the registry in draft and withhold the metric |
+| Planning Team access: viewer-only or SQL Lab | Viewer-only; do not claim it is enforced until the role is implemented and tested |
+| Analyst audience and database role for <code>marts_detail</code> | Grant nobody general access; approve named analysts individually after P2 |
+| Whether withdrawn coaching deliveries belong in the public W-C denominator | Preserve the source state and withhold the adherence metric |
+| Monthly high-risk meaning: any-time union, latest/month-end, or two metrics | Keep the states separate and publish neither until named contracts are approved |
+| Disposition of the seven legacy PI views and dashboard | Keep them disabled; P5 records keep/replace/retire explicitly |
+
+PII regeneration must also surface these retention decisions:
+
+- whether unused iCHMS auth and membership tables belong in the warehouse;
+- the purpose, role access, and retention period for IRS genomic inputs;
+- the purpose, role access, and retention period for unused Discovery
+  consultation, examination, medical, prescription, genomic, and free-text
+  payloads.
+
+Technical choices such as selector syntax, physical heart-rate dedupe,
+measurement conflict tests, and current-site column versus current bridge do
+not require business approval if they preserve the contracts in
+[todo.md](todo.md).
+
+## Known traps
+
+- **Current site is not event-time site.** Current Ulsan/Jeju is a present-day
+  filter only.
+- **Percentile scores are not additive.** IRS, IRS+, LRS, MRS, and PRS are
+  independent 1–100 ranks.
+- **Zero can mean unknown.** A stale or not-yet-loaded channel must not become a
+  zero-activity observation.
+- **Dense panels need reconciliation.** Grain tests alone cannot detect activity
+  lost outside the spine.
+- **Share has three denominators.** Created links, interacted links, and
+  interaction-event rows are different quantities.
+- **Share interaction may belong to the recipient side.** Do not count it as a
+  sender active-day until its meaning is confirmed.
+- **A watermark is not a DAG ledger.** It does not prove an empty incremental
+  target ran successfully as part of a complete source run.
+- **The PII inventory is a snapshot.** The loader auto-adds upstream columns;
+  target changes and added-column logs trigger a new review.
+- **The database role is necessary but not sufficient.** EL exclusions, staging
+  projections, schema grants, and metric rules are all part of the boundary.
+- **Database size is not Azure free space.** Azure Monitor owns the 70% warning
+  and 80% stop lines.
+- **Superset datasets are single relations.** Site and other temporal semantics
+  must be resolved in tested serving relations, not improvised in charts.
+- **Historical counts need dates.** Wearable sources backfill, so a count at a
+  fixed event cutoff can rise after a later extraction.
+
+## Handover completion definition
+
+Handover is not complete when files exist. It is complete when:
+
+- P0–P6 recovery evidence is recorded;
+- the current core graph and Python suite are green;
+- current Superset charts return current extraction data;
+- the general BI role cannot reach raw detail or PII;
+- daily EL → freshness → core transform runs without a local machine;
+- the operational owners above are named;
+- Airflow metadata and Superset application databases have tested restore
+  procedures;
+- a successor can diagnose and safely rerun a failure from the English
+  operational runbook alone.

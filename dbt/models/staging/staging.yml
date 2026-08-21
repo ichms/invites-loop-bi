@@ -12,7 +12,7 @@ models:
   - name: stg_sibc__user_intg_log
     description: >
       Integrated-analysis log, deduped to (user_id, ymd_date) by last
-      created_at (Q-01). LLM error rows filtered out. JSONB flattened through
+      created_at. LLM error rows filtered out. JSONB flattened through
       the allow-list seed only.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -66,8 +66,7 @@ models:
     description: >
       Cohort population (N-02), one row per enrolled user. Identity and
       static-age columns are never selected. weight_kg / height_cm are the
-      enrolment snapshot for dim_user segment moderation (Frame 2); zeros
-      nullified.
+      enrolment snapshot for current-profile attributes; zeros nullified.
     columns:
       - name: user_id
         data_tests: [not_null, unique]
@@ -126,7 +125,7 @@ models:
               arguments: {max_null_rate: 0.35}
 
   - name: stg_iccoli__tb_ext_user_mapper
-    description: Loop-cohort side of the Q-10 mapper; user_no never leaves staging.
+    description: Loop-cohort key mapper; user_no never leaves staging.
     columns:
       - name: user_id
         data_tests: [not_null, unique]
@@ -167,6 +166,71 @@ models:
         data_tests: [not_null]
       - name: action_no
         data_tests: [not_null]
+
+  - name: stg_iccoli__tb_search_log
+    description: >
+      GRAIN: one row per search_log_no. Search text and raw user_no are absent;
+      create_datetime is preserved as searched_at with an explicit KST date.
+    columns:
+      - name: search_log_no
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests: [not_null]
+      - name: searched_at
+        data_tests: [not_null]
+      - name: search_date
+        data_tests: [not_null]
+      - name: source_display_yn
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['Y', 'N']}
+
+  - name: stg_iccoli__tb_share_info
+    description: >
+      GRAIN: one row per share_no. share_key, target_no, and raw user_no are
+      absent; share_type remains a controlled source classification.
+    columns:
+      - name: share_no
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests: [not_null]
+      - name: share_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['EVENT', 'HOME', 'INVITE', 'POST', 'SURVEY']}
+      - name: share_created_at
+        data_tests: [not_null]
+      - name: share_created_date
+        data_tests: [not_null]
+
+  - name: stg_iccoli__tb_share_log
+    description: >
+      GRAIN: one row per share_log_no. user_id translates from from_user_no;
+      recipient fields and raw source serials are absent. The event remains a
+      neutral interaction signal, not a sender action or confirmed open.
+    columns:
+      - name: share_log_no
+        data_tests: [not_null, unique]
+      - name: share_no
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_iccoli__tb_share_info')
+                field: share_no
+      - name: user_id
+        data_tests: [not_null]
+      - name: interaction_at
+        data_tests: [not_null]
+      - name: interaction_date
+        data_tests: [not_null]
+      - name: source_point_call_yn
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['Y', 'N']}
 
   - name: stg_iccoli__tb_user_login_log
     columns:
@@ -221,9 +285,8 @@ models:
   - name: stg_discovery__lifelog_meal
     description: >
       Surviving meal records (is_deleted filtered out), joined to a user through
-      stg_discovery__lifelog_user_info. This is the channel the evidence
-      dashboard reported as disc_lifelog_user_food — 11 users — while the real
-      one carries 335 users and ~36.5k records (C22 / §5).
+      stg_discovery__lifelog_user_info. This is the canonical meal channel; do
+      not substitute the similarly named disc_lifelog_user_food relation.
     columns:
       - name: user_id
         data_tests: [not_null]
@@ -235,7 +298,9 @@ models:
       One row per (user, day, stream) a wearable stream fired. The union of all
       five streams is the settled definition of device ownership (C3), after
       three competing definitions produced 130 / 157 / 167 and were quoted
-      interchangeably. Materialized as a table — heartrate alone is ~8.5M rows.
+      interchangeably. Materialized incrementally in intermediate_private;
+      heartrate is consumed from the one physical dedupe relation rather than
+      grouped from landing again.
       Also carries per-stream daily aggregates (n_samples, value_*, kcal, duration)
       for fct_wearable_day; fct_user_day still only counts distinct stream_code.
     data_tests:
@@ -288,8 +353,10 @@ models:
 
   - name: stg_discovery__lifelog_wearable_heartrate
     description: >
-      Distinct raw heart-rate payloads. The measured_at/type/value combination
-      remains distinct; only identical payloads collapse into source_row_count.
+      Physical private 30-day window-replace dedupe of raw heart-rate payloads.
+      The measured_at/type/value combination remains distinct; only identical
+      payloads collapse into source_row_count. Use a measured full refresh for
+      corrections older than the window.
     columns:
       - name: source_observation_id
         data_tests: [not_null, unique]

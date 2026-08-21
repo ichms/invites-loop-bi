@@ -1,19 +1,50 @@
--- fct_measurement collapses the same reading arriving under several lifelog
--- transaction ids (device re-sync). That is safe only while the collapsed rows
--- AGREE: 36 such groups exist today and all 36 carry one distinct value.
---
--- If two different values ever land in the same (user, timestamp, metric) slot,
--- the fact's `distinct on` picks one by transaction id — an arbitrary choice
--- that would put an unexplainable number in front of the Planning Team. That is
--- a decision for a human, so this fails the build rather than warning: which
--- reading is right depends on why they disagree.
+-- The atomic measurement fact must preserve every distinct observation
+-- signature. Same user/time/metric rows are allowed: nine such slots differ by
+-- platform in the 2026-08-21 baseline. A failure here means the fact collapsed
+-- or altered value, unit, device, platform, or location.
 
-select
-	l.user_id,
-	m.measured_at,
-	m.metric_code,
-	count(distinct m.metric_value) as distinct_values
-from {{ ref('stg_discovery__lifelog_measurements') }} as m
-inner join {{ ref('stg_discovery__lifelog_user_info') }} as l using (user_lifelog_sn)
-group by 1, 2, 3
-having count(distinct m.metric_value) > 1
+with cohort as (
+
+	select user_id from {{ ref('dim_user') }}
+
+),
+
+expected as (
+
+	select
+		l.user_id,
+		m.source_stream,
+		m.user_lifelog_sn as source_transaction_id,
+		m.measured_at,
+		m.metric_code,
+		m.metric_value,
+		m.metric_unit,
+		l.device_type_code as device_type_id,
+		l.measure_platform_code,
+		l.measure_location
+	from {{ ref('stg_discovery__lifelog_measurements') }} as m
+	inner join {{ ref('stg_discovery__lifelog_user_info') }} as l using (user_lifelog_sn)
+	inner join cohort as c on c.user_id = l.user_id
+
+),
+
+fact as (
+
+	select
+		user_id,
+		source_stream,
+		source_transaction_id,
+		measured_at,
+		metric_code,
+		metric_value,
+		metric_unit,
+		device_type_id,
+		measure_platform_code,
+		measure_location
+	from {{ ref('fct_measurement') }}
+
+)
+
+(select * from expected except all select * from fact)
+union all
+(select * from fact except all select * from expected)

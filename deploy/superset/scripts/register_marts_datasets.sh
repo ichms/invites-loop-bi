@@ -1,5 +1,7 @@
 #!/bin/bash
-# Register every marts relation as a Superset dataset, via the REST API.
+# Register every core/serving marts relation as a Superset dataset, via the
+# REST API. Source-grain wearable relations belong to marts_detail and are a
+# hard failure if they ever drift back into marts.
 # Run from deploy/superset/ on the host, after the stack is healthy:
 #
 #   ./scripts/register_marts_datasets.sh
@@ -15,8 +17,23 @@ BASE="http://localhost:${SS_HOST_PORT:-8088}"
 COOKIES="$(mktemp)"
 trap 'rm -f "$COOKIES"' EXIT
 
-# The table list comes from the warehouse itself (read-only), so this script
-# has exactly one source of truth for "what exists in marts".
+# Refuse to convert a schema-boundary regression into a Superset data leak.
+DETAIL_IN_MARTS=$(PGPASSWORD="$SS_DW_PASSWORD" psql \
+	"host=$SS_DW_HOST port=$SS_DW_PORT dbname=$SS_DW_DBNAME user=$SS_DW_USER" \
+	-Atc "SELECT c.relname FROM pg_class c
+	      JOIN pg_namespace n ON n.oid = c.relnamespace
+	      WHERE n.nspname = 'marts'
+	        AND c.relname IN ('fct_wearable_step', 'fct_wearable_activity',
+	          'fct_wearable_heartrate', 'fct_wearable_oxygen_saturation',
+	          'fct_wearable_sleep', 'fct_wearable_sleep_stage')
+	      ORDER BY 1")
+[[ -z "$DETAIL_IN_MARTS" ]] || {
+	echo "refusing registration: wearable detail relation(s) found in marts: $DETAIL_IN_MARTS"
+	exit 1
+}
+
+# The core relation list comes from the warehouse itself (read-only), so the
+# physical marts boundary remains the registration source of truth.
 TABLES=$(PGPASSWORD="$SS_DW_PASSWORD" psql \
 	"host=$SS_DW_HOST port=$SS_DW_PORT dbname=$SS_DW_DBNAME user=$SS_DW_USER" \
 	-Atc "SELECT c.relname FROM pg_class c

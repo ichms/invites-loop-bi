@@ -1,16 +1,36 @@
-{{ config(severity='warn') }}
+-- N-02/P1: mapper entries without a current sibc.user_master row are a dynamic
+-- reconciliation population, not a pinned production count. They may remain
+-- visible in staging but must not leak into current-cohort facts.
 
--- N-02: mapper entries with no sibc.user_master row have no facts anywhere —
--- they are counted, not modelled. 39 on 2026-08-06; 42 after the 2026-08-13
--- enrolment-wave re-read. Growth after an enrolment wave is expected
--- (update the pin); movement without one deserves a look.
--- Warn-severity: this number moves for legitimate reasons, unlike the unmapped
--- cohort set next door.
+with mapper_only as (
+
+	select x.user_id
+	from {{ ref('stg_iccoli__tb_ext_user_mapper') }} as x
+	left join {{ ref('stg_sibc__user_master') }} as m using (user_id)
+	where m.user_id is null
+
+),
+
+fact_users as (
+
+	select 'search'::text as channel, search_log_no::text as event_id, user_id
+	from {{ ref('fct_app_search_event') }}
+
+	union all
+
+	select 'share_link', share_no::text, user_id
+	from {{ ref('fct_share_link') }}
+
+	union all
+
+	select 'share_interaction', share_log_no::text, user_id
+	from {{ ref('fct_share_interaction_event') }}
+
+)
 
 select
-	count(*) as mapper_only_users,
-	42 as expected
-from {{ ref('stg_iccoli__tb_ext_user_mapper') }} as x
-left join {{ ref('stg_sibc__user_master') }} as m using (user_id)
-where m.user_id is null
-having count(*) <> 42
+	f.channel,
+	f.event_id,
+	f.user_id
+from fact_users as f
+inner join mapper_only as m using (user_id)

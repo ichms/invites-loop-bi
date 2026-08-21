@@ -1,0 +1,24 @@
+selectors:
+  - name: daily_core
+    description: >
+      Core dimensions, atomic facts, panels, serving views, and their required
+      ancestors. Source-grain wearable facts and their dedicated tests are
+      explicitly excluded.
+    definition:
+      method: tag
+      value: daily_core
+      parents: true
+      indirect_selection: cautious
+      exclude:
+        - method: tag
+          value: wearable_detail
+
+  - name: wearable_detail
+    description: >
+      Six source-grain wearable observation facts, their dedicated tests, and
+      required ancestors. Run only through the measured detail procedure.
+    definition:
+      method: tag
+      value: wearable_detail
+      parents: true
+      indirect_selection: cautious

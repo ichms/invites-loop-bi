@@ -35,7 +35,7 @@ select
 	a.user_id,
 	a.action_no,
 	a.action_datetime,
-	a.action_datetime::date as action_date,
+	(a.action_datetime at time zone 'Asia/Seoul')::date as action_date,
 	a.target_data
 from actions as a
 inner join users as u using (user_id)

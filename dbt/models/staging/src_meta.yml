@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: stg_meta
+    description: EL control metadata. Per-target watermarks are not a DAG-run ledger.
+    schema: stg_meta
+    tables:
+      - name: watermarks
+        description: >
+          Last recorded per-target load outcome. An empty incremental run does
+          not advance updated_at, so this source cannot prove that a complete
+          DAG ran or that an empty target was checked recently.

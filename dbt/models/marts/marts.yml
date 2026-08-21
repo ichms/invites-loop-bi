@@ -8,28 +8,16 @@ version: 2
 models:
   - name: dim_user
     description: >
-      SCD1 user dimension. Population = the sibc cohort (N-02), 404 rows.
+      SCD1 user dimension. Population = the current sibc cohort (N-02).
       is_mapped flags cohort members with no iccoli link so they keep their
       facts instead of being orphaned. No name, no DOB, no static age.
-      Frame 2 attributes (bmi_band, cohort_group, is_observable_*) live here
-      so multi-angle segment moderation is a filter, not a project.
+      Current site and lifetime behaviour are deliberately separated from this
+      stable/current-profile relation.
     columns:
       - name: user_id
         data_tests: [not_null, unique]
-      - name: site_id
-        description: >
-          Current Ulsan/Jeju site from the one active approved
-          auth_user_customer link. SCD1 current state only: in-place source
-          updates erase the previous site and actual switch time, so this must
-          not be used for historical/as-of attribution.
-        data_tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('dim_deployment_site')
-                field: site_id
       - name: birth_year
-        description: Null for 4 of 404 users (measured 2026-08-06); age columns in the facts go null with it rather than guessing.
+        description: Null when no approved birth-year source exists; age columns in facts remain null rather than guessing.
         data_tests:
           - null_rate_below:
               arguments: {max_null_rate: 0.05}
@@ -55,8 +43,8 @@ models:
       - name: bmi_band
         description: >
           Asia-Pacific cutoffs (underweight <18.5, normal <23, overweight <25,
-          obese ≥25). §2.5: BMI is non-monotonic and age-confounded — never
-          interpret a BMI slice alone.
+          obese ≥25). Historical analysis found BMI non-monotonic and
+          age-confounded; never interpret a BMI slice alone.
         data_tests:
           - accepted_values:
               arguments:
@@ -66,34 +54,35 @@ models:
       - name: cohort_group
         description: >
           staff | participant. From the staff_roster seed, not from behavioural
-          traces. Contrast is "participation contract vs none" (§1.5), not
-          voluntary vs involuntary. Seed was bootstrapped from wellness-mission
-          absence and needs owner confirmation for new hires.
+          traces. Contrast is "participation contract vs none", not an inferred
+          behavioural distinction. The seed needs owner confirmation for new
+          hires.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: [staff, participant]
-      - name: is_observable_app_login
-        data_tests: [not_null]
-      - name: is_observable_routine
-        description: Ever had a routine delivered (in the coaching engine at all).
-        data_tests: [not_null]
-      - name: is_observable_manual_measurement
-        data_tests: [not_null]
-      - name: is_observable_meal
-        data_tests: [not_null]
-      - name: is_observable_wearable
-        description: >
-          Ever produced any wearable stream day (step-inclusive union — see
-          stg_discovery__lifelog_wearable_day). Quote counts with extraction date.
-        data_tests: [not_null]
-      - name: is_observable_wearable_and_routine
-        description: >
-          §2.4 intersection: wearable ever AND lifetime routine completion
-          rate ≥ 50%. The structural finding that behaviour-exposure and
-          physiology populations diverge by age.
-        data_tests: [not_null]
+
+  - name: bridge_user_site_current
+    description: >
+      GRAIN: current cohort user × current approved site. Current-filter only;
+      never use this bridge for event-time attribution because source updates
+      erase the previous site and actual switch time.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [user_id, current_site_id]}
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: current_site_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_deployment_site'), field: site_id}
 
   - name: dim_date
     description: Generated calendar, 2025-01-01 through the end of next year. Weeks start Monday (D-18).
@@ -144,13 +133,13 @@ models:
 
   - name: fct_measurement
     description: >
-      GRAIN: user × measured_at × metric. Discrete lifelog readings (BP, body
-      composition, grip strength, glucose) in tall form. Continuous streams and
-      interval aggregates are excluded — see the staging model header.
+      GRAIN: user × source transaction × measured_at × metric. Device,
+      platform, and location are retained; repeated user/time/metric slots are
+      not collapsed.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
-            combination_of_columns: [user_id, measured_at, metric_code]
+            combination_of_columns: [user_id, source_stream, source_transaction_id, measured_at, metric_code]
     columns:
       - name: user_id
         data_tests:
@@ -160,6 +149,10 @@ models:
                 to: ref('dim_user')
                 field: user_id
       - name: measured_at
+        data_tests: [not_null]
+      - name: source_stream
+        data_tests: [not_null]
+      - name: source_transaction_id
         data_tests: [not_null]
       - name: measured_date
         data_tests:
@@ -303,7 +296,8 @@ models:
   - name: fct_wearable_heartrate
     description: >
       GRAIN: one distinct source heart-rate observation. Different values in the
-      same timestamp/type slot remain separate observations.
+      same timestamp/type slot remain separate observations. Built only for a
+      named detail consumer; routine runs replace the latest 30 event-time days.
     columns:
       - name: observation_id
         data_tests: [not_null, unique]
@@ -470,7 +464,7 @@ models:
                 severity: warn
 
   - name: fct_app_action
-    description: "GRAIN: one app action (action_log_no). The fact that needed the Q-10 key translation; done in staging."
+    description: "GRAIN: one app action (action_log_no). Its user key translation is completed in staging."
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -499,29 +493,202 @@ models:
                 to: ref('dim_date')
                 field: date_day
 
+  - name: fct_app_login_event
+    description: "GRAIN: one keyless-source login event at user × timestamp × channel."
+    columns:
+      - name: login_event_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: logged_in_at
+        data_tests: [not_null]
+      - name: login_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+
+  - name: fct_app_search_event
+    description: >
+      GRAIN: one retained current-cohort search event per search_log_no. Search
+      text never lands in this fact; display_yn is retained as neutral source
+      state without filtering away an observed event.
+    columns:
+      - name: search_log_no
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: searched_at
+        data_tests: [not_null]
+      - name: search_date
+        data_tests: [not_null]
+      - name: source_display_yn
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['Y', 'N']}
+
+  - name: fct_share_link
+    description: >
+      GRAIN: one retained current-cohort share link per share_no. This is link
+      creation, not a recipient interaction. share_key and target_no are absent.
+    columns:
+      - name: share_no
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: share_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['EVENT', 'HOME', 'INVITE', 'POST', 'SURVEY']}
+      - name: share_created_at
+        data_tests: [not_null]
+      - name: share_created_date
+        data_tests: [not_null]
+
+  - name: fct_share_interaction_event
+    description: >
+      GRAIN: one retained current-cohort neutral interaction per share_log_no.
+      user_id is the source from_user actor, but this relation does not assert
+      that the sender performed the downstream interaction or that it was an
+      open/success event.
+    columns:
+      - name: share_log_no
+        data_tests: [not_null, unique]
+      - name: share_no
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_share_link')
+                field: share_no
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_user')
+                field: user_id
+      - name: interaction_at
+        data_tests: [not_null]
+      - name: interaction_date
+        data_tests: [not_null]
+      - name: source_point_call_yn
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['Y', 'N']}
+
+  - name: fct_meal_event
+    description: "GRAIN: one meal record at source transaction × recorded timestamp."
+    columns:
+      - name: meal_event_id
+        data_tests: [not_null, unique]
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: source_transaction_id
+        data_tests: [not_null]
+      - name: recorded_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+
+  - name: fct_user_intg_analysis_day
+    description: "GRAIN: user × analysis day, with allow-listed signature fields only."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [user_id, ymd_date]}
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: ymd_date
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_date'), field: date_day}
+
+  - name: fct_channel_load_status
+    description: >
+      GRAIN: one channel. Conservative per-target success evidence; not a DAG
+      completion ledger, because empty incremental runs are invisible today.
+    columns:
+      - name: channel_code
+        data_tests: [not_null, unique]
+      - name: dependency_count
+        data_tests: [not_null]
+      - name: successful_dependency_count
+        data_tests: [not_null]
+      - name: completion_evidence_kind
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['TARGET_SUCCESS_ONLY']}
+
+  - name: fct_user_milestone
+    description: "GRAIN: user × first observed milestone; no fabricated timestamps or placeholder stages."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [user_id, milestone_code]}
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: milestone_code
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [cohort_enrolled, iccoli_mapped, first_app_login, first_app_action, first_app_search, first_share_created, first_share_interaction, first_coaching_delivered, first_measurement]
+      - name: occurred_date
+        data_tests: [not_null]
+      - name: temporal_precision
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: [DATE, TIMESTAMP]}
+
   - name: fct_user_day
     description: >
-      GRAIN: user × ymd, DENSE — every day from the user's joined_dt to the
-      observation frontier, including days with no activity at all. Changed from
-      the old sparse scoring-only spine on 2026-08-07 (5,747 rows = 9.3% of
-      lived user-days); a behavioural panel needs the zero days because they are
-      the denominator. has_irs_scores / has_intg_analysis still mark the
-      scoring-day subset. Carries age_at_activity + age_band_5y (D-24/D-25,
-      Q-12), relative time since join, and per-channel behaviour with
-      active/passive separated.
+      GRAIN: user × ymd, dense from the earlier of enrolment and first real
+      activity through the observed/load frontier. Counts are zero only where
+      channel load and user eligibility are established; otherwise they are
+      NULL with an explicit state.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [user_id, ymd_date]
       # A completion can never exceed its delivery. This is the denominator
-      # contract that DASHBOARD_METRIC_FEEDBACK §5.2 records being violated in
-      # a published verdict — asserted here so it fails the build instead.
+      # contract whose historical violation motivated the dense-panel finding;
+      # it is asserted here so a regression fails the build.
       - dbt_utils.expression_is_true:
           arguments:
             expression: "routines_completed <= routines_delivered"
       # NOT tested: days_since_joined >= 0. The spine deliberately starts before
       # enrolment where a user was already active, so negative values are
-      # correct and are what makes a pre-period available (§1.3). Asserting
+      # correct and are what makes a pre-period available. Asserting
       # non-negativity here is what silently dropped 381 meal records.
     columns:
       - name: user_id
@@ -539,7 +706,7 @@ models:
                 to: ref('dim_date')
                 field: date_day
       - name: age_at_activity
-        description: Null only where birth_year is null (4 users); a rise here means the birth_year path broke.
+        description: Null where birth_year is unavailable; never impute it silently.
         data_tests:
           - null_rate_below:
               arguments: {max_null_rate: 0.05}
@@ -558,17 +725,16 @@ models:
               config:
                 where: "age_band_5y is not null"
       - name: diseases_scored
-        data_tests: [not_null]
-      - name: has_intg_analysis
-        data_tests: [not_null]
-      - name: has_irs_scores
-        data_tests: [not_null]
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+              config: {where: "diseases_scored is not null"}
 
       - name: days_since_joined
         description: >
           Days since the user's joined_dt. Use this, not calendar date, when
-          comparing trajectories — §2.1: enrolment spans nine months, so
-          calendar time mixes cohort entry with behaviour change.
+          comparing trajectories; calendar time mixes cohort entry with
+          behaviour change when enrolment is staggered.
         data_tests: [not_null]
       - name: months_since_joined
         description: >
@@ -579,64 +745,67 @@ models:
 
       - name: app_login_events
         description: >
-          THE dominant control variable, not one channel among several. §4.5:
-          routine completion ~24% at 0–5 login days vs ~65–72% at 16+, and
-          controlling for it reverses the sign of the premium-content effect.
-          Condition on this before claiming any behavioural comparison.
+          Historical analysis found login activity to be a strong confounder.
+          Use it as a control variable, but require registered semantics and
+          model validation before making an effect claim.
         data_tests:
-          - not_null
           - dbt_utils.accepted_range:
               arguments: {min_value: 0}
+              config: {where: "app_login_events is not null"}
       - name: did_login
-        data_tests: [not_null]
+        description: NULL when login load or eligibility is not established.
       - name: routines_delivered
         description: The denominator. What the engine offered, whether or not the user acted.
         data_tests:
-          - not_null
           - dbt_utils.accepted_range:
               arguments: {min_value: 0}
+              config: {where: "routines_delivered is not null"}
       - name: routines_completed
         description: The numerator. Never compute a rate from this without routines_delivered in the same row.
         data_tests:
-          - not_null
           - dbt_utils.accepted_range:
               arguments: {min_value: 0}
+              config: {where: "routines_completed is not null"}
       - name: manual_measurements
-        description: Discrete readings the user took deliberately — BP, body, bodyfat, grip, glucose. ACTIVE input.
-        data_tests: [not_null]
+        description: Discrete readings; NULL absence because device/channel eligibility is unsourced.
       - name: meal_records
         description: >
-          Surviving meal records from disc_lifelog_user_meal — the channel the
-          dashboard previously reported as disc_lifelog_user_food (11 users)
-          while the real one had 335. See C22 / §5.
-        data_tests: [not_null]
+          Meal records from the canonical disc_lifelog_user_meal source. Do not
+          substitute the similarly named food relation. NULL absence means
+          eligibility is unknown, not zero meals.
       - name: wearable_streams_active
         description: >
-          Distinct wearable streams that fired (0–5). Wear-day, not intensity:
-          §1.1④ found 91.6% of holders at a perfect 30/30, because a worn watch
-          collects passively. PASSIVE collection.
+          Distinct wearable streams that fired (0–5). This is a wear-day signal,
+          not intensity, and represents passive collection. Quote population
+          counts only with their extraction date.
         data_tests:
-          - not_null
           - dbt_utils.accepted_range:
               arguments: {min_value: 0, max_value: 5}
+              config: {where: "wearable_streams_active is not null"}
       - name: app_actions
-        data_tests: [not_null]
-      - name: active_input_events
-        description: >
-          manual_measurements + meal_records. Kept separate from passive
-          collection (§2.3): active channels were cooling while the wearable
-          sat at its ceiling, and one summed "engagement" number hides that.
-        data_tests: [not_null]
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 0}
+              config: {where: "app_actions is not null"}
       - name: had_passive_collection
-        data_tests: [not_null]
+        description: TRUE only on observed wearable days; otherwise NULL because allocation is unknown.
+      - name: app_login_state
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: [OBSERVED_ACTIVITY, OBSERVED_ZERO, NOT_LOADED, NOT_YET_ELIGIBLE, ELIGIBILITY_UNKNOWN]}
+      - name: measurement_state
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: [OBSERVED_ACTIVITY, NOT_LOADED, ELIGIBILITY_UNKNOWN]}
+      - name: share_interaction_events
+        description: Neutral interaction count; excluded from sender app-engaged-day logic.
 
   - name: fct_user_day_wide
     description: >
-      GRAIN: user × ymd — same dense panel as fct_user_day, with Frame 2
-      segment columns and calendar helpers pre-joined for Superset (HOWTO.md
-      §3 Option A). Filter on sex / bmi_band / cohort_group /
-      is_observable_* / months_since_joined without writing a join. Do not
-      put new measure logic here — extend fct_user_day, then this follows.
+      GRAIN: user × ymd convenience relation over the time-aware panel. It has
+      no lifetime behaviour segmentation and no historical site attribution.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -652,8 +821,8 @@ models:
               arguments: {max_null_rate: 0.01}
       - name: bmi_band
         description: >
-          Asia-Pacific band from dim_user. Null for 3 users with zero
-          height/weight upstream. Never interpret BMI slices alone (§2.5).
+          Asia-Pacific band from dim_user. Null where height or weight is
+          unavailable. Never interpret BMI slices alone.
         data_tests:
           - accepted_values:
               arguments:
@@ -663,23 +832,54 @@ models:
       - name: cohort_group
         description: >
           staff | participant from staff_roster. Contrast is participation
-          contract vs none (§1.5), not voluntary vs involuntary.
+          contract vs none, not an inferred behavioural distinction.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
                 values: [staff, participant]
-      - name: is_observable_wearable
-        data_tests: [not_null]
-      - name: is_observable_wearable_and_routine
-        description: §2.4 intersection — wearable ever AND routine completion ≥50%.
-        data_tests: [not_null]
       - name: week_start_date
         data_tests: [not_null]
       - name: months_since_joined
         data_tests: [not_null]
       - name: app_login_events
+        description: Nullable where load or eligibility is not established.
+
+  - name: fct_user_month
+    description: >
+      GRAIN: user × calendar month, with cohort-relative month index, explicit
+      left partial/right censoring flags, and observed-day denominator pairs.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [user_id, month_start_date]}
+      - dbt_utils.expression_is_true:
+          arguments: {expression: "routines_completed <= routines_delivered"}
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: user_id}
+      - name: month_start_date
         data_tests: [not_null]
+      - name: cohort_month_index
+        data_tests: [not_null]
+      - name: panel_days
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: {min_value: 1, max_value: 31}
+      - name: is_left_partial_month
+        data_tests: [not_null]
+      - name: is_right_censored
+        data_tests: [not_null]
+      - name: remote_care_qualifying_days
+        description: Intentionally NULL until an approved qualifying-day definition exists.
+      - name: remote_care_qualifying_day_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: [HYPOTHESIS_UNDEFINED]}
 
   - name: fct_user_disease_day
     description: >

@@ -1,0 +1,2 @@
+cohort_definition_id,cohort_version,cohort_name,population_relation,stable_predicate,status,effective_from,notes
+current_sibc_cohort,1,Current SiBC enrolled cohort,stg_sibc__user_master,user_id is not null,ACTIVE,2026-08-21,Membership is source presence; behavior and current site never define membership

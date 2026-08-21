@@ -49,6 +49,7 @@ with body_info_deduped as (
 blood_pressure as (
 
 	select distinct
+		'blood_pressure'::text as source_stream,
 		user_lifelog_sn,
 		measured_dt as measured_at,
 		unnest(array['systolic_bp', 'diastolic_bp', 'pulse']) as metric_code,
@@ -61,6 +62,7 @@ blood_pressure as (
 body_info as (
 
 	select
+		'body_info'::text as source_stream,
 		user_lifelog_sn,
 		measured_dt as measured_at,
 		unnest(array['weight', 'height', 'bmi']) as metric_code,
@@ -73,6 +75,7 @@ body_info as (
 body_fat as (
 
 	select distinct
+		'body_fat'::text as source_stream,
 		user_lifelog_sn,
 		measured_dt as measured_at,
 		unnest(array['skeletal_muscle_mass', 'body_fat_mass', 'body_fat_percentage']) as metric_code,
@@ -85,6 +88,7 @@ body_fat as (
 grip_strength as (
 
 	select distinct
+		'grip_strength'::text as source_stream,
 		user_lifelog_sn,
 		measured_dt as measured_at,
 		unnest(array['grip_strength_left', 'grip_strength_right']) as metric_code,
@@ -112,6 +116,7 @@ blood_glucose as (
 	-- build if a reading ever lands in the ambiguous 25–50 band, where the rule
 	-- would be guessing rather than reading a clear gap. Zero such rows today.
 	select distinct
+		'blood_glucose'::text as source_stream,
 		user_lifelog_sn,
 		measured_dt as measured_at,
 		'blood_glucose' as metric_code,
@@ -135,6 +140,7 @@ unioned as (
 )
 
 select
+	source_stream,
 	user_lifelog_sn,
 	measured_at,
 	metric_code,

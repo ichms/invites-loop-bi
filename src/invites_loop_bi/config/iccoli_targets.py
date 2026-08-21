@@ -8,6 +8,10 @@
 # delete the iccoli rows from `stg_meta.watermarks` to force a full re-read --
 # loads are idempotent, so the replay is safe and, at these volumes, cheap.
 LOOP_USERS_ONLY = "user_no IN (SELECT user_no FROM public.tb_ext_user_mapper WHERE ext_system_code = 'LOOP')"
+# tb_share_log keys the actor as from_user_no, not user_no.
+LOOP_FROM_USERS_ONLY = (
+	"from_user_no IN (SELECT user_no FROM public.tb_ext_user_mapper WHERE ext_system_code = 'LOOP')"
+)
 
 ICCOLI_EXTRACTION_TARGETS = [
 	{
@@ -276,5 +280,33 @@ ICCOLI_FULL_REFRESH_TARGETS = [
 		"schema_name": "public",
 		"table_name": "tb_point_item_intr_hist_dtl",
 		"load_type": "full_refresh",
+	},
+	# --- in-app search / share -------------------------------------------------
+	# These small event tables have no source-declared primary-key constraint and
+	# no update timestamp. In-place UPDATEs were observed on search/share logs, so
+	# create_datetime cannot safely watermark them. A filtered full refresh keeps
+	# current source state without exporting community-app actors.
+	{
+		"schema_name": "public",
+		"table_name": "tb_search_log",
+		"load_type": "full_refresh",
+		"row_filter": LOOP_USERS_ONLY,
+		"exclude_columns": ("word",),
+	},
+	{
+		"schema_name": "public",
+		"table_name": "tb_share_info",
+		"load_type": "full_refresh",
+		"row_filter": LOOP_USERS_ONLY,
+		"exclude_columns": ("share_key",),
+	},
+	{
+		# from_user_no is the Loop actor. Recipient identifiers, access keys and
+		# browser/device fingerprints never leave the source system.
+		"schema_name": "public",
+		"table_name": "tb_share_log",
+		"load_type": "full_refresh",
+		"row_filter": LOOP_FROM_USERS_ONLY,
+		"exclude_columns": ("share_key", "to_user_ip", "to_user_agent", "to_user_no"),
 	},
 ]

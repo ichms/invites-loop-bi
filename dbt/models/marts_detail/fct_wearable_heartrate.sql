@@ -1,6 +1,18 @@
 -- GRAIN: one row per distinct source heart-rate observation (observation_id).
 -- Different values in the same timestamp/type slot remain separate observations.
 
+{{ config(
+	materialized='incremental',
+	incremental_strategy='window_replace',
+	window_column='measured_at',
+	window_lookback_days=30,
+	on_schema_change='fail',
+	indexes=[
+		{'columns': ['observation_id'], 'unique': true},
+		{'columns': ['measured_at']},
+	]
+) }}
+
 select
 	h.source_observation_id as observation_id,
 	l.user_id,
@@ -16,3 +28,12 @@ select
 from {{ ref('stg_discovery__lifelog_wearable_heartrate') }} as h
 inner join {{ ref('stg_discovery__lifelog_user_info') }} as l using (user_lifelog_sn)
 inner join {{ ref('dim_user') }} as u using (user_id)
+{% if is_incremental() %}
+where h.measured_at >= (
+	select coalesce(
+		max(measured_at) - interval '30 days',
+		'-infinity'::timestamptz
+	)
+	from {{ this }}
+)
+{% endif %}

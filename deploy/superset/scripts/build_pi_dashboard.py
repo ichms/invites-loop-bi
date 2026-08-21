@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build the PI dashboard in Superset from the v_pi_* / v_bridge_* datasets.
 
-The dashboard METRICS.ko.md describes, as code: charts, layout and the
+This script recreates the legacy dashboard reviewed in METRICS.md as code:
+charts, layout, and the
 interpretation rules are all created through the REST API, so the
 dashboard is reproducible from the repo instead of living only in an
 admin's clicks.
@@ -30,10 +31,10 @@ BASE = None  # set in main() from .env
 DASHBOARD_SLUG = "pi-metrics"
 DASHBOARD_TITLE = "PI 지표 대시보드"
 
-# The dashboard carries its own reading instructions (METRICS.ko.md §4).
+# The dashboard carries its legacy reading instructions (METRICS.md).
 # A number nobody knows how to read is worse than no number.
 NOTES_MARKDOWN = """\
-### 해석 규칙 (METRICS.ko.md §4)
+### 해석 규칙 (METRICS.md)
 
 1. **커버리지를 먼저 보세요.** 점수 받은 사람이 줄어든 달에 평균 위험도가 내려갔다면, \
 위험이 줄어든 게 아니라 아픈 사람이 측정을 안 한 것일 수 있습니다.
@@ -163,7 +164,11 @@ def main():
 	api = Api(f"http://localhost:{cfg.get('SS_HOST_PORT', '8088')}",
 		cfg["SS_ADMIN_USER"], cfg["SS_ADMIN_PASSWORD"])
 
-	datasets = {d["table_name"]: d["id"] for d in api.get_all("dataset")}
+	datasets = {
+		d["table_name"]: d["id"]
+		for d in api.get_all("dataset")
+		if d.get("schema") == "marts"
+	}
 	existing_charts = {c["slice_name"]: c["id"] for c in api.get_all("chart")}
 	dashboards = {d["slug"]: d["id"] for d in api.get_all("dashboard") if d.get("slug")}
 

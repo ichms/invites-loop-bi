@@ -1,5 +1,5 @@
-# Transform layer (the T of the ELT pipeline; see ../CLAUDE.md and
-# INVITES_LOOP_BI_DECISION_LOG.md D-01..D-10).
+# Transform layer (the T of the ELT pipeline; see ../AGENTS.md, ../todo.md,
+# and INVITES_LOOP_BI_DECISION_LOG.md D-01..D-10).
 #
 # Schema layout -- the naming needs one minute of attention, because two things
 # are both called "staging":
@@ -8,8 +8,10 @@
 #                              dbt treats them as *sources* and never writes there.
 #   staging                    dbt staging models (views): dedupe, casts, key
 #                              translation, JSONB flattening via the allow-list.
-#   marts                      dims / facts / metric views. The only schema the
-#                              Superset read-only role (superset_reader) can see.
+#   intermediate_private       reusable physical dedupe/aggregation. dbt only.
+#   marts                      core dims / facts / metric views. The only schema
+#                              the Superset read-only role can see.
+#   marts_detail               source-grain wearable facts. Named analysts only.
 name: invites_loop_bi
 version: "0.1.0"
 profile: invites_loop_bi
@@ -29,19 +31,85 @@ models:
     staging:
       +schema: staging
       +materialized: view
+    intermediate_private:
+      +schema: intermediate_private
+      +tags: [daily_core]
+      stg_discovery__lifelog_wearable_day:
+        +materialized: incremental
+      stg_discovery__lifelog_wearable_heartrate:
+        +materialized: incremental
     marts:
-      # Full rebuilds every run, deliberately: at the current volumes a rebuild
-      # is minutes, and `table` avoids the incremental-model concepts (late
-      # arriving data, lookback windows) entirely. Revisit only if `dbt build`
-      # ever exceeds ~15 minutes (IMPLEMENTATION_PLAN.md §3.1).
       +schema: marts
-      +materialized: table
+      +tags: [daily_core]
+      # Physical policy is explicit per core model. A newly added model no
+      # longer becomes a full-refresh table merely because it lives here.
+      dim_action:
+        +materialized: table
+      dim_date:
+        +materialized: table
+      dim_deployment_site:
+        +materialized: table
+      dim_device_type:
+        +materialized: table
+      dim_disease:
+        +materialized: table
+      dim_user:
+        +materialized: table
+      bridge_user_site_current:
+        +materialized: table
+      fct_app_action:
+        +materialized: table
+      fct_app_login_event:
+        +materialized: table
+      fct_app_search_event:
+        +materialized: table
+      fct_coaching_event:
+        +materialized: table
+      fct_channel_load_status:
+        +materialized: table
+      fct_meal_event:
+        +materialized: table
+      fct_measurement:
+        +materialized: table
+      fct_share_interaction_event:
+        +materialized: table
+      fct_share_link:
+        +materialized: table
+      fct_user_day:
+        +materialized: table
+      fct_user_day_wide:
+        +materialized: table
+      fct_user_disease_day:
+        +materialized: table
+      fct_user_intg_analysis_day:
+        +materialized: table
+      fct_user_milestone:
+        +materialized: table
+      fct_user_month:
+        +materialized: table
+      fct_wearable_day:
+        +materialized: table
       metrics:
-        # Metric definitions are VIEWS, not tables (D-10). A view is always
-        # consistent with the star beneath it, and "thin enough to review" is
-        # the property that keeps the KPI/PI/Bridge separation alive — a
-        # reviewer can read six lines and say "that's wrong".
+        # Metric definitions remain thin views, but P5 adds the registry,
+        # evidence, denominator, censoring, and freshness contract (D-10).
         +materialized: view
+    marts_detail:
+      +schema: marts_detail
+      +tags: [wearable_detail]
+      # Detail facts remain tables, but each policy is explicit and isolated
+      # from daily_core. Heart rate alone uses bounded window replacement.
+      fct_wearable_activity:
+        +materialized: table
+      fct_wearable_heartrate:
+        +materialized: incremental
+      fct_wearable_oxygen_saturation:
+        +materialized: table
+      fct_wearable_sleep:
+        +materialized: table
+      fct_wearable_sleep_stage:
+        +materialized: table
+      fct_wearable_step:
+        +materialized: table
 
 seeds:
   invites_loop_bi:

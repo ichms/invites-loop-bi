@@ -9,8 +9,8 @@
 #     DAG did not run", independent of source traffic.
 #   - user_intg_log / user_irs_log receive daily paired writes while the
 #     service is up.
-# `dbt source freshness` is not part of `dbt build`; it gets wired into the
-# transform DAG in Phase 3, alongside the real ELT schedules.
+# `dbt source freshness` is not part of `dbt build`. todo.md requires it as a
+# hard pre-build gate before P6 and in the event-driven P7 orchestration.
 
 version: 2
 
@@ -24,7 +24,7 @@ sources:
         description: >
           Daily integrated-analysis payload per user. Paired write with
           user_irs_log. Up to 22 intra-day recomputations per (user_id, ymd);
-          staging keeps the last by created_at (Q-01).
+          staging keeps the last by created_at.
         freshness:
           warn_after: {count: 36, period: hour}
           error_after: {count: 72, period: hour}
@@ -61,8 +61,8 @@ sources:
           birthday and birthtime were dropped and excluded at extraction on
           2026-08-06 (PII_INVENTORY.md R-4); static age/bio_age and born_in
           still land but are never selected (D-22/D-23/D-24). weight/height
-          are selected as an enrolment snapshot for dim_user.bmi_band
-          (Frame 2); longitudinal body metrics stay in fct_measurement.
+          are selected as an enrolment snapshot for the current profile;
+          longitudinal body metrics stay in fct_measurement.
       - name: user_signature_type
         description: Full-refresh target — freshness on it measures whether the sibc DAG ran at all.
         freshness:
@@ -70,7 +70,7 @@ sources:
           error_after: {count: 50, period: hour}
       - name: api_logs
       - name: chat_msgs
-        description: Free-text health chat. Sensitive category — must never reach marts (§2 of the plan).
+        description: Free-text health chat. Sensitive category; it must never reach marts.
       - name: chat_thread_evts
       - name: chat_threads
       - name: chat_threads_batch_state

@@ -1,5 +1,5 @@
 # stg_ichms: EL landing schema for the iCHMS auth/member layer (database
-# invites_loop, schema ichms). The Q-11 inventory (PII_INVENTORY.md) found the
+# invites_loop, schema ichms). The PII inventory found the
 # direct identifiers this layer carried (credentials, phone numbers, names,
 # birth dates, login IPs, chart number); they were dropped and excluded at
 # extraction on 2026-08-06. Since 2026-08-13, auth_customer and

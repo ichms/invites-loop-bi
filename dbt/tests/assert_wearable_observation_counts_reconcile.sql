@@ -1,3 +1,5 @@
+{{ config(tags=['wearable_detail']) }}
+
 -- The facts collapse exact payload duplicates but source_row_count must retain
 -- their multiplicity. Reconcile each cohort-filtered fact back to attributable
 -- staging observations so neither a join nor dedupe can silently lose rows.

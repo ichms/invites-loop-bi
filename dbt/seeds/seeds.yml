@@ -1,6 +1,30 @@
 version: 2
 
 seeds:
+  - name: cohort_definition_registry
+    description: >
+      Versioned metadata for stable cohort predicates. This registers the
+      source-presence rule only; it does not materialize compound behavioural
+      membership or current-site membership.
+    config:
+      column_types:
+        cohort_definition_id: text
+        cohort_version: integer
+        cohort_name: text
+        population_relation: text
+        stable_predicate: text
+        status: text
+        effective_from: date
+        notes: text
+    columns:
+      - name: cohort_definition_id
+        data_tests: [not_null]
+      - name: cohort_version
+        data_tests: [not_null]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [cohort_definition_id, cohort_version]}
+
   - name: jsonb_allowlist
     description: >
       D-26/D-27: the explicit allow-list of top-level JSONB keys in the sibc log
@@ -42,13 +66,14 @@ seeds:
     description: >
       Owner-maintained list of internal-staff user_ids inside the analysis
       cohort. dim_user.cohort_group reads this seed — never derive staff from
-      auth_user_customer re-points or other behavioural traces (CLAUDE.md
-      2026-08-12). Bootstrapped 2026-08-13 from the §1 wellness-mission
+      auth_user_customer re-points or other behavioural traces
+      (IMPLEMENTATION_PLAN.md §2.9). Bootstrapped 2026-08-13 from a
+      wellness-mission
       discriminator (sibc cohort members with no accrual under parent
       category 34, excluding the unused completion flag 41): 19 rows. That
       proxy is "participation contract vs none", not "voluntary vs
-      involuntary" (DASHBOARD_METRIC_FEEDBACK §1.5). Add new hires here by
-      hand; remove anyone confirmed not staff.
+      involuntary". Treat that bootstrap as historical evidence; add or remove
+      people only from an owner-confirmed roster.
     config:
       column_types:
         user_id: text
