@@ -14,18 +14,12 @@ as dbt sources in `src_<system>.yml`; dbt never writes back to a landing schema.
 
 ## Current state — 2026-08-21
 
-P0 through P3 are complete. The search/share landing contract, dbt sources,
+P0 through P4 are complete. The search/share landing contract, dbt sources,
 PII-safe staging models, actor translation, grain/FK tests, and dynamic
-reconciliation are implemented and green. Remaining work includes:
-
-- there is no reusable physical heart-rate deduplication relation;
-- `stg_discovery__lifelog_wearable_heartrate` is a view that repeats a large
-  `GROUP BY` whenever a consumer or test reads it;
-- the historically named `stg_discovery__lifelog_wearable_day` is now a table
-  in `intermediate_private`, but it independently reads raw heart-rate rows
-  during a rebuild; and
-- the P2 selectors and core/detail/private schema boundary are implemented,
-  while the P4 reusable heart-rate dedupe is not.
+reconciliation are implemented and green. P4 moved the heart-rate model to a
+physical 30-day window-replace relation in `intermediate_private`; the daily,
+detail, attribution, and reconciliation paths now `ref()` it. The obsolete
+staging view was removed after a zero-dependency check.
 
 Do not describe the current graph as the completed P2–P4 target. Mutable row counts,
 especially wearable counts, must always include their extraction date.
@@ -102,9 +96,9 @@ such as exposing only `birth_year` instead of raw birth data, follow the same
 rule. See [`PII_INVENTORY.md`](../../../PII_INVENTORY.md) for the inventory;
 the target configuration and inventory must agree before P0 is complete.
 
-## P4 wearable processing target
+## P4 wearable processing contract
 
-The daily core and observation-detail paths must reuse one physical,
+The daily core and observation-detail paths reuse one physical,
 deduplicated heart-rate relation. That relation must:
 
 - calculate the expensive payload deduplication once;
@@ -116,8 +110,9 @@ deduplicated heart-rate relation. That relation must:
 
 Reusable intermediates belong in a schema that general BI roles cannot read.
 Source-grain wearable facts belong in `marts_detail`, not the daily core or the
-general Superset role. The target is complete only when the same
-multimillion-row aggregation is no longer repeated by multiple models and tests.
+general Superset role. The expensive full-source equivalence test is tagged
+`p4_heartrate_audit` and excluded from routine selectors. It passed after both
+full refresh and incremental replacement on 2026-08-21.
 
 ## Build gates
 

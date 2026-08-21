@@ -135,12 +135,12 @@ Status has operational meaning:
 |---|---|---|
 | D-29 | Active | **`fct_user_day` is a dense user × day behavioral panel.** Zero days are required denominators, and the spine begins at the earlier of enrollment and first activity. |
 | D-30 | Active | **Panel bounds and zero semantics are channel-aware.** The upper bound is an observed/load frontier; stale, ineligible, or not-yet-loaded channels are unknown, not zero. Current watermarks provide `TARGET_SUCCESS_ONLY`, not DAG completion. |
-| D-31 | Active, P4 incomplete | **Source-grain wearable facts remain separate by honest grain in `marts_detail`.** P2 established the selector/schema/access boundary; P4 must still implement the measured incremental detail path. Daily reporting uses `fct_wearable_day`, and exact duplicates retain `source_row_count`. |
+| D-31 | Active | **Source-grain wearable facts remain separate by honest grain in `marts_detail`.** P4 implemented the measured 30-day incremental detail path, but no detail fact is built without a named consumer. Daily reporting uses `fct_wearable_day`, and exact duplicates retain `source_row_count`. |
 | D-32 | Active with disclosure | **Deployment site is current-state only.** `bridge_user_site_current.current_site_id` is a current filter. Never attach it to historical facts as event-time site. |
 | D-33 | Active | **Lifecycle is modeled as atomic milestones.** `fct_user_milestone` stores only real source dates/timestamps; date-only enrollment does not gain a fabricated midnight timestamp and missing stages have no placeholder rows. |
 | D-34 | Active | **Search, share-link creation, and share interaction are separate atomic facts at their measured source unique-index grains.** The source tables have no declared PK constraints; the indexed identifiers are currently unique and tested. The facts are not merged with one another or convenience-deduped against `fct_app_action`. |
-| D-35 | Approved target | **Heart-rate payload dedupe is computed once in a reusable physical relation.** Daily aggregate, detail fact, attribution, and reconciliation consume the same relation; multiplicity-weighted results must match the prior definition. |
-| D-36 | Active, execution pending | **`daily_core` and `wearable_detail` are independent selectors and operating units.** P2 graph assertions prove the boundary. Complete core execution waits for P6 and measured detail execution waits for P4; a detail failure cannot invalidate the last successful core build. |
+| D-35 | Active | **Heart-rate payload dedupe is computed once in a reusable physical relation.** Daily aggregate, detail fact, attribution, and reconciliation consume the same relation; full-source audits proved multiplicity-weighted full/incremental equivalence on 2026-08-21. |
+| D-36 | Active | **`daily_core` and `wearable_detail` are independent selectors and operating units.** P2/P4 graph assertions prove the boundary. Complete core execution waits for P6 and detail execution requires a named consumer plus a fresh storage gate; a detail failure cannot invalidate the last successful core build. |
 
 ### 3.5 Semantic layer
 
@@ -156,8 +156,8 @@ Status has operational meaning:
 
 ## 4. Model-family contract
 
-The table records the current family contract; P4/P5 rows remain target work
-where stated.
+The table records the current family contract; P5 rows remain target work where
+stated.
 
 | Family | Contract |
 |---|---|

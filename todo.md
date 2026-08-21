@@ -2,9 +2,9 @@
 
 최종 갱신: **2026-08-21 KST**
 
-상태: **P3 완료, P4 구현 시작 전**
+상태: **P4 완료, P5 구현 시작 전**
 
-다음 세션 시작점: **P4 — heart-rate 비용 제거와 wearable detail**
+다음 세션 시작점: **P5 — W-A/B/C/D semantic layer**
 
 이 문서는 다음 세션이 바로 작업을 이어가기 위한 **실행 계약서**다. 과거
 작업일지나 완료 이력은 반복하지 않는다.
@@ -46,9 +46,10 @@ P0~P5가 끝나기 전에는 아래 작업을 하지 않는다.
 
 ### 0.2 기존 작업 보존
 
-2026-08-21 현재 `main`의 기준 commit은 `35b0ed4`이며 아래 변경은 아직
-commit되지 않았다. 모두 현재 작업의 일부이므로 덮어쓰거나 되돌리지 않는다.
-다음 세션은 반드시 `git status --short`와 각 diff부터 읽는다.
+복구 시작 기준은 `35b0ed4`였고, P0~P4 구현과 기존 변경은 창민님의
+`18086ef` commit에 포함됐다. 후속 `76e7c08`도 같은 현재 history의 일부다.
+둘을 squash, reorder, revert하지 않는다. 다음 세션은 반드시
+`git status --short`, 현재 branch와 각 diff부터 읽는다.
 
 | 파일 | 현재 의도 |
 |---|---|
@@ -58,7 +59,7 @@ commit되지 않았다. 모두 현재 작업의 일부이므로 덮어쓰거나 
 | `tests/extract/test_config_targets.py` | 신규 cohort filter·PII test 추가 |
 | `todo.md` | 이 실행계획 |
 
-별도 요청이 없으면 commit, push, 배포하지 않는다.
+별도 요청이 없으면 추가 commit, push, 배포하지 않는다.
 
 ### 0.3 처음 실행해도 안전한 명령
 
@@ -162,9 +163,10 @@ reconciliation한다. 단, 선언된 target 총수 128과 37/16/36/5/34 분할�
 - 사고 당시 직접 촉발 요인은 약 901만 landing heart-rate 행의 반복
   `GROUP BY`와 약 888만 행 detail fact의 full rebuild가 threads=4로 겹친
   것이었다.
-- 현재 `stg_discovery__lifelog_wearable_heartrate`는 view라 model/test마다
-  같은 대형 집계를 다시 계산한다.
-- `stg_discovery__lifelog_wearable_day`도 raw heart-rate를 별도로 읽는다.
+- P4에서 `stg_discovery__lifelog_wearable_heartrate`를 private physical
+  30일 window-replace relation으로 바꿨고 obsolete staging view를 제거했다.
+- `stg_discovery__lifelog_wearable_day`는 physical dedupe를 재사용하며 raw
+  heart-rate를 별도로 집계하지 않는다.
 - `fct_wearable_heartrate`를 소비하는 canonical `v_pi_*`는 없다.
 - SQL의 DB size와 `temp_bytes`는 비교 지표일 뿐 Azure 전체 filesystem
   여유를 대신하지 않는다. 실제 stop line은 Azure Monitor storage를 쓴다.
@@ -472,8 +474,8 @@ P2 실행 증거(2026-08-21 KST):
   모두 `permission denied`였다. 세션은 read-only, KST, 2분 timeout이었다.
 - `dbt parse`, selector별 `dbt compile`, P2 selector boundary script가 통과했고
   offline Python baseline은 그대로 95 passed, 32 skipped였다.
-- 전체 selector build는 실행하지 않았다. core 전체 build는 P6,
-  wearable detail은 P4 storage gate 후의 별도 실행 단위다.
+- 전체 selector build는 실행하지 않았다. core 전체 build는 P6이며,
+  wearable detail은 P4에 구현됐지만 named consumer 승인 전에는 실행하지 않는다.
 
 ### P3 — dimension, lifecycle, canonical panels
 
@@ -545,35 +547,53 @@ P3 실행 증거(2026-08-21 KST):
   DAG/run ledger를 구현하기 전에는 `DAG_COMPLETE`라고 부르지 않는다.
 - P3 신규 core table은 `superset_reader` SELECT를 상속했고,
   `intermediate_private`와 여섯 `marts_detail` table은 계속 SELECT 불가다.
-- P4 전용 `wearable_detail` reconciliation은 아직 0행 detail fact 때문에
-  의도적으로 실행 경계 밖에 두었다. P4 storage gate 전 detail build는 하지 않았다.
+- P4는 named consumer가 없는 여섯 detail fact를 0행으로 유지한 채 physical
+  heart-rate/daily 경로만 별도 계측·검증했다.
 
 ### P4 — heart-rate 비용 제거와 wearable detail
 
 첫 core build 전에 완료한다. `fct_wearable_day`도 raw heart-rate를 사용하므로
 detail fact만 selector에서 빼는 것으로는 충분하지 않다.
 
-- [ ] heart-rate payload dedupe를 physical relation으로 한 번만 계산한다.
-- [ ] `fct_wearable_day`, detail fact, attribution, reconciliation이 같은
+- [x] heart-rate payload dedupe를 physical relation으로 한 번만 계산한다.
+- [x] `fct_wearable_day`, detail fact, attribution, reconciliation이 같은
       deduped relation을 재사용하게 한다.
-- [ ] exact duplicate multiplicity를 `source_row_count`로 보존한다.
-- [ ] `n_samples = sum(source_row_count)`를 유지한다.
-- [ ] 평균은 multiplicity-weighted 결과가 기존 full calculation과 같아야 한다.
-- [ ] min/max와 user/date별 일별 집계 동등성을 검증한다.
-- [ ] heart-rate dedupe와 detail fact에 30일 lookback incremental 또는
+- [x] exact duplicate multiplicity를 `source_row_count`로 보존한다.
+- [x] `n_samples = sum(source_row_count)`를 유지한다.
+- [x] 평균은 multiplicity-weighted 결과가 기존 full calculation과 같아야 한다.
+- [x] min/max와 user/date별 일별 집계 동등성을 검증한다.
+- [x] heart-rate dedupe와 detail fact에 30일 lookback incremental 또는
       window-replace 전략을 적용한다.
-- [ ] 30일 밖 수정·mapping 변경을 위한 명시적 full-refresh 경로를 남긴다.
-- [ ] incremental과 full-refresh 결과의 동등성 test를 추가한다.
-- [ ] named consumer가 없는 detail fact는 daily build에서 제외한다.
-- [ ] 분석가가 detail을 실행할 때의 Azure monitor, threads=1, stop 절차를
+- [x] 30일 밖 수정·mapping 변경을 위한 명시적 full-refresh 경로를 남긴다.
+- [x] incremental과 full-refresh 결과의 동등성 test를 추가한다.
+- [x] named consumer가 없는 detail fact는 daily build에서 제외한다.
+- [x] 분석가가 detail을 실행할 때의 Azure monitor, threads=1, stop 절차를
       문서화한다.
 
 P4 완료 조건:
 
-- [ ] 같은 약 900만 행 `GROUP BY`가 model/test마다 반복되지 않는다.
-- [ ] core build가 `fct_wearable_heartrate` 전체를 재생성하지 않는다.
-- [ ] 일별 wearable 값과 source-row reconciliation이 기존 정의와 일치한다.
-- [ ] core/detail의 permanent size, runtime, temp delta를 따로 측정할 수 있다.
+- [x] 같은 약 900만 행 `GROUP BY`가 model/test마다 반복되지 않는다.
+- [x] core build가 `fct_wearable_heartrate` 전체를 재생성하지 않는다.
+- [x] 일별 wearable 값과 source-row reconciliation이 기존 정의와 일치한다.
+- [x] core/detail의 permanent size, runtime, temp delta를 따로 측정할 수 있다.
+
+P4 완료 evidence — 2026-08-21 KST:
+
+- Azure Monitor는 실행 전 51.87%, peak 52.43%, 종료 51.86%였다.
+- physical dedupe 9,010,144행은 landing 9,010,635행을 대표하며 exact duplicate
+  491행을 `source_row_count`로 보존한다. full은 68.32초, 30일 replace는
+  1,654,036행/58.33초였다.
+- full과 incremental 각각 뒤 `assert_heartrate_full_calculation_equivalence`
+  가 통과해 weighted mean, min/max, sample count, user/KST-date 집계가 같았다.
+- wearable-day full/incremental은 각각 47,046행/10.86초,
+  11,170행 window/5.23초였다. `fct_wearable_day` 18,218행과 7개 core
+  reconciliation test가 통과했고 canonical intermediate 14개 test도 통과했다.
+- 최종 dedupe relation은 1,688,805,376 bytes였다. 전체 측정 sequence의
+  `invites_dw` delta는 +1,693,712,384 bytes, cumulative `temp_bytes` delta는
+  +3,735,895,392 bytes였다. detail fact는 named consumer가 없어 8 KB/0행이다.
+- landing에는 `measured_dt` index가 없어 30일 filter도 791 MB relation을
+  sequential scan한다. windowing은 group/rewrite/temp 범위를 줄이지만 scan
+  자체는 줄이지 않는다는 한계를 운영 baseline에 남긴다.
 
 ### P5 — W-A/B/C/D semantic layer
 

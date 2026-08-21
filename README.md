@@ -19,15 +19,20 @@ Invites Loop의 다섯 PostgreSQL 운영 소스에서 데이터를 추출해 war
   `marts_detail`의 raw wearable fact 6개는 아직 0행입니다. Superset은
   refresh/대표 chart acceptance를 하지 않았으므로 기존 출력은 아직 인용 가능한
   운영 지표가 아닙니다.
+- P4에서 심박수 9,010,635 source행을 9,010,144개 distinct payload와
+  `source_row_count`로 materialize했고, 47,046행 wearable-day가 이 relation을
+  재사용하도록 바꿨습니다. full refresh와 30일 window replacement 뒤의
+  full-source audit가 모두 통과했습니다. named consumer가 없어 detail fact는
+  계속 0행입니다.
 - 과거의 `dbt build 388/388`, `pytest 125/125`는 현재 acceptance baseline이
   아닙니다. 현재 offline test 기준선은 95 passed / 32 skipped이며 live suite는
   다시 실행하지 않았습니다.
 - EL과 dbt는 모두 수동입니다. Airflow schedule은 코드에 선언돼 있지만 실제
   scheduler가 배포되거나 정상 운전된 적은 없습니다.
-- P0~P3는 완료됐습니다. `daily_core`/`wearable_detail` selector,
+- P0~P4는 완료됐습니다. `daily_core`/`wearable_detail` selector,
   private/detail schema, materialization, grant와 registration 경계가 구현·검증됐고,
-  dimension/lifecycle/canonical panel도 targeted 검증됐습니다. 다음 단계는 P4
-  reusable heart-rate dedupe와 wearable detail입니다.
+  dimension/lifecycle/canonical panel과 reusable heart-rate dedupe도 targeted
+  검증됐습니다. 다음 단계는 P5 metric registry와 W-A/B/C/D semantic layer입니다.
 
 ### 지금 실행하면 안 되는 것
 

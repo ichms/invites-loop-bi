@@ -6,14 +6,14 @@ gate.
 
 As of 2026-08-21:
 
-- P0 through P3 are complete and recovery continues at P4;
+- P0 through P4 are complete and recovery continues at P5;
 - P3 targeted builds populated dimensions, atomic facts, milestones, and the
   daily/month panels; the complete <code>daily_core</code> recovery remains P6;
 - Superset has not been refreshed or accepted against the P3 relations;
 - <code>daily_core</code>, <code>wearable_detail</code>,
   <code>intermediate_private</code>, and <code>marts_detail</code> are implemented;
-  the lifecycle/panel redesign is implemented, while reusable heart-rate
-  dedupe and the metric registry are not;
+  the lifecycle/panel redesign and reusable heart-rate dedupe are implemented,
+  while the metric registry is not;
 - the current transform DAG is not safe to run unattended.
 
 Never copy an old command merely because it worked against the previous graph.
@@ -370,7 +370,7 @@ must label current site as current and never imply historical attribution.
 
 ## 8. Build the heart-rate path safely
 
-P4 must make one physical deduplicated heart-rate relation reusable by
+P4 made one physical deduplicated heart-rate relation reusable by
 <code>fct_wearable_day</code>, detail facts, attribution, and reconciliation.
 
 The contract must preserve:
@@ -391,6 +391,44 @@ relation size, and node runtime.
 
 Never treat the database-size query as a substitute for Azure free-space
 measurement.
+
+Routine heart-rate processing uses exact model selections in this order:
+
+```bash
+source setup_env.sh
+uv run dbt ls --project-dir dbt \
+  --select stg_discovery__lifelog_wearable_heartrate \
+  --resource-type model
+uv run dbt run --project-dir dbt \
+  --select stg_discovery__lifelog_wearable_heartrate \
+  --threads 1 --fail-fast
+uv run dbt run --project-dir dbt \
+  --select stg_discovery__lifelog_wearable_day \
+  --threads 1 --fail-fast
+```
+
+Do not replace the first command with an unreviewed `dbt build`: indirect test
+selection includes the intentionally expensive P4 audit and detail-only
+reconciliation. Run the full-source audit explicitly only under the same Azure
+gate:
+
+```bash
+uv run dbt test --project-dir dbt \
+  --select assert_heartrate_full_calculation_equivalence \
+  --threads 1 --fail-fast
+```
+
+For a correction older than 30 days or a lifelog-user mapping change, run the
+dedupe and wearable-day commands with `--full-refresh`, then run the audit. A
+source-grain detail build additionally requires a named consumer and access
+approver; inspect `--selector wearable_detail`, recheck Azure immediately, and
+run it separately with one thread. Never couple it to `daily_core`.
+
+The 2026-08-21 measured baseline was: full dedupe 68.32 seconds, 30-day
+replacement 58.33 seconds, full wearable-day 10.86 seconds, incremental
+wearable-day 5.23 seconds, and audit 16.95/15.53 seconds. The landing table has
+no `measured_dt` index, so the bounded incremental query still scans the 791 MB
+landing relation even though it groups and rewrites only the recent window.
 
 ## 9. Add or change a public metric
 

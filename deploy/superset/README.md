@@ -13,7 +13,8 @@ Superset must not be treated as a source of current operating numbers:
 - the existing PI views and dashboard remain unaccepted legacy definitions;
 - the W-A/B/C/D semantic layer and metric registry do not exist yet;
 - P2 moved source-grain wearable facts to `marts_detail` and reusable physical
-  aggregation to `intermediate_private`; P4 heart-rate reuse is still pending;
+  aggregation to `intermediate_private`; P4 heart-rate reuse is implemented,
+  while detail remains unbuilt without a named consumer;
 - registration discovers only `marts` and fails closed if a known detail fact
   drifts back into that schema;
   and

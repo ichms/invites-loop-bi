@@ -27,11 +27,12 @@ and which decisions still require an owner.
   suite has not been rerun.
 - No scheduler is deployed. The declared Airflow schedules have never operated
   the pipeline unattended.
-- P0 through P3 are complete and recovery is at P4. The
+- P0 through P4 are complete and recovery is at P5. The
   <code>daily_core</code> and <code>wearable_detail</code> selectors plus
   <code>intermediate_private</code>/<code>marts_detail</code> access boundaries
-  are implemented and verified. The lifecycle/panel redesign is implemented;
-  reusable heart-rate dedupe, metric registry, and W-A/B/C/D layer remain.
+  are implemented and verified. The lifecycle/panel redesign and reusable
+  heart-rate dedupe are implemented; the metric registry and W-A/B/C/D layer
+  remain.
 
 Do not quote Superset or legacy metric views as current business evidence.
 
@@ -122,6 +123,18 @@ denominators plus left-partial/right-censored flags. Per-target watermarks are
 explicitly labelled <code>TARGET_SUCCESS_ONLY</code>, not DAG completion. New
 core tables inherited <code>superset_reader</code> SELECT while private/detail
 relations remained denied.
+
+P4 exit evidence was recorded on 2026-08-21 KST. Azure storage measured 51.87%
+before execution, peaked at 52.43%, and ended at 51.86%. The canonical private
+dedupe contains 9,010,144 distinct payloads representing 9,010,635 source rows;
+491 exact duplicate rows remain visible through <code>source_row_count</code>.
+The full build took 68.32 seconds and the 30-day replacement took 58.33 seconds.
+The full-source equivalence audit passed after both paths, including weighted
+mean, min/max, sample count, and user/KST-date aggregates. The private relation
+was 1,688,805,376 bytes after the incremental run; the whole measured sequence
+increased <code>invites_dw</code> by 1,693,712,384 bytes and cumulative
+<code>temp_bytes</code> by 3,735,895,392 bytes. Six detail facts remain empty by
+design because no named consumer was approved.
 
 ## P6 recovery controls
 

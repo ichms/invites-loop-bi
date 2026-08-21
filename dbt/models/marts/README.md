@@ -10,9 +10,10 @@ P3 targeted builds restored the redesigned dimensions and atomic facts plus
 2,744 lifecycle milestones, 81,745 user-days, and 2,996 user-months. Lifetime
 `is_observable_*` fields are gone, current site is isolated in
 `bridge_user_site_current`, and channel completeness/eligibility is explicit.
-P2's selector/schema/access boundary remains in force. The graph still has no
-P4 reusable heart-rate dedupe or P5 metric registry, and the complete
-`daily_core` recovery remains gated to P6.
+P2's selector/schema/access boundary remains in force. P4 added the reusable
+heart-rate dedupe and verified full/incremental equivalence. The graph still
+has no P5 metric registry, and the complete `daily_core` recovery remains gated
+to P6.
 
 Do not present the target structure as deployed, run a bare full build, enable
 the transform DAG, or register all current marts relations in Superset. The

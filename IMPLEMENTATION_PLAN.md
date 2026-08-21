@@ -78,7 +78,7 @@ The warehouse already used `stg_<system>` for EL landing, so dbt staging models 
 in a separate `staging` schema. The current mart schema is `marts`. The redesign adds
 private reusable physical intermediates and a restricted `marts_detail` schema. P2
 implemented those schema/access boundaries and P3 populated the core relations;
-the P4 heart-rate physical strategy remains incomplete.
+P4 implemented and measured the heart-rate physical strategy.
 
 ### 2.5 Disease-score source
 
@@ -233,6 +233,22 @@ metric and reconciles the complete value/unit/device/platform/location
 signature. Canonical login (53,585 rows), meal (39,701 rows), integrated-analysis,
 search/share, coaching, measurement, disease-score, and daily wearable facts
 feed the dense panel rather than being re-aggregated from staging.
+
+### 2.14 P4 heart-rate physical path — implemented 2026-08-21
+
+Azure Monitor measured 51.87% storage before the controlled run, 52.43% at the
+peak, and 51.86% afterward. A one-thread full build materialized 9,010,144
+distinct heart-rate payloads in 68.32 seconds. Their
+<code>source_row_count</code> represents 9,010,635 landing rows, retaining 491
+exact duplicate rows rather than discarding their analytical weight.
+
+The 30-day window replacement rewrote 1,654,036 payloads in 58.33 seconds. The
+landing table has no <code>measured_dt</code> index, so the window reduces group
+and rewrite volume but not the 791 MB landing scan. Full-source audits after
+both full and incremental paths returned zero differences for source row count,
+weighted mean, min/max, sample count, and user/KST-date daily values. The daily
+intermediate remained 47,046 rows and the core fact 18,218 rows. No detail fact
+was built because no named consumer exists.
 
 The resulting <code>fct_user_day</code> has 81,745 rows and eleven explicit
 channel states. Loaded/eligible absence may be zero; stale, not-yet-eligible, or

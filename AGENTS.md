@@ -59,13 +59,17 @@ The current state is not the old completed-state narrative:
   facts remain empty in <code>marts_detail</code>; metric views are still legacy
   candidates, and Superset has not been refreshed or accepted against the
   redesign.
+- P4 materialized the reusable 9,010,144-row heart-rate payload dedupe and the
+  47,046-row incremental wearable-day aggregate. Full-source audits passed
+  after both full refresh and 30-day window replacement. The six detail facts
+  remain unbuilt because there is no named consumer.
 - Historical results such as dbt 388/388 and pytest 125/125 are evidence about
   an older graph, not current acceptance criteria.
 - The current offline Python baseline is 95 passed and 32 skipped. The live
   suite has not been rerun.
 - EL and dbt have only been invoked manually. Schedules are declared in code,
   but no scheduler is deployed and no DAG has run unattended.
-- P0 through P3 are complete. The W-first redesign continues at P4.
+- P0 through P4 are complete. The W-first redesign continues at P5.
 
 The 128-target configuration contract and its 37/16/36/5/34 per-system split
 are intentional test invariants. Do not hard-code volatile source, landing, or
